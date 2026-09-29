@@ -216,3 +216,17 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+
+# ROS 2 / colcon generated files
+build/
+install/
+log/
+
+# Python generated files
+__pycache__/
+*.pyc
+*.pyo
+
+# VS Code
+.vscode/
