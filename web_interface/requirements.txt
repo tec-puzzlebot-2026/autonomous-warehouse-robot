@@ -1,3 +1,0 @@
-nicegui>=2.0
-paho-mqtt>=2.0
-pillow>=10.0   # solo para la cámara sintética del simulador
