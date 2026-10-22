@@ -3,7 +3,7 @@
 <package format="3">
   <name>main_ros</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
+  <description>Autonomous warehouse robot (PuzzleBot): navigation, vision, voice commands</description>
   <maintainer email="a01285451@tec.mx">goma</maintainer>
   <license>TODO: License declaration</license>
 
@@ -11,6 +11,8 @@
   <depend>geometry_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>std_msgs</depend>
+
+  <exec_depend>rqt_image_view</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

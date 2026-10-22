@@ -22,9 +22,29 @@ setup(
             'share/' + package_name,
             ['package.xml']
         ),
+
+        # General launch files
         (
             os.path.join('share', package_name, 'launch'),
             glob('launch/*.py')
+        ),
+
+        # Infrastructure launch files
+        (
+            os.path.join('share', package_name, 'infrastructure', 'launch'),
+            glob('main_ros/infrastructure/launch/*.launch.py')
+        ),
+
+        # Vision launch files
+        (
+            os.path.join('share', package_name, 'vision', 'launch'),
+            glob('main_ros/vision/launch/*.launch.py')
+        ),
+
+        # Voice launch files (if you keep voice.launch.py inside voice/launch/)
+        (
+            os.path.join('share', package_name, 'voice', 'launch'),
+            glob('main_ros/voice/launch/*.launch.py')
         ),
     ],
 
@@ -47,6 +67,18 @@ setup(
 
     entry_points={
         'console_scripts': [
+
+            # Infrastructure: Debug teleoperation
+            'debug_teleup_script = main_ros.infrastructure.scripts.debug_teleup_script:main',
+
+            # Infrastructure: Differential drive
+            'differential_drive = main_ros.infrastructure.scripts.differential_drive:main',
+
+            # Voice: command recognition (HMM) -> /voice_command
+            'voice_program_manager = main_ros.voice.voice_program_manager:main',
+
+            # Vision: YOLO webcam test
+            'yolo_webcam_test = main_ros.vision.testing.yolo_webcam_test:main',
         ],
     },
 )

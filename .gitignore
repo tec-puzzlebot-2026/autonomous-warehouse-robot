@@ -230,3 +230,35 @@ __pycache__/
 
 # VS Code
 .vscode/
+
+# Voice recognition: audio data and caches (too big for git)
+**/voice/data/
+**/voice/scripts/feature_cache.pkl
+**/voice/scripts/log_*.txt
+recordings_*.zip
+
+
+# ============================================================
+# Large data - kept locally, never pushed
+# ============================================================
+
+# ROS 2 bags
+**/raw_bags/
+*.zip
+*.db3
+*.mcap
+
+# Vision: extracted frames, augmentation, outputs
+**/vision/training/data/
+**/vision/training/frames*/
+**/vision/training/output/
+
+# Isaac Sim digital twin: phone video and extracted frames
+**/vision/issacsim/data/
+*.mp4
+*.mov
+
+# Voice: audio datasets, feature cache, logs
+**/voice/data/
+**/voice/scripts/feature_cache.pkl
+**/voice/scripts/log_*.txt

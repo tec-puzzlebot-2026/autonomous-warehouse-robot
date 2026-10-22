@@ -1,0 +1,9 @@
+# Install with:  pip3 install --user -r requirements.txt
+# numpy<2 keeps compatibility with ROS 2 packages (cv_bridge, etc.) built against numpy 1.x
+numpy<2
+scipy
+scikit-learn
+librosa
+hmmlearn
+sounddevice
+soundfile
