@@ -90,7 +90,7 @@ def segments(cmd, min_duration=1.5, tol=1e-3):
             t0 = cmd[start, 0]
             t1 = cmd[i, 0] if i < len(cmd) else cmd[i - 1, 0]
             v, w = cmd[start, 1], cmd[start, 2]
-            if (abs(v) > EPS_CMD or abs(w) > EPS_CMD) and t1 - to >= min_duration:
+            if (abs(v) > EPS_CMD or abs(w) > EPS_CMD) and t1 - t0 >= min_duration:
                 out.append((t0, t1, float(v), float(w)))
             start = i
     return out
@@ -120,7 +120,7 @@ def steady_start(t, x, t0, t1, settle_min, window=0.5, rel_tol=0.05, abs_tol=0.0
     idx = np.nonzero(bad)[0]
     # First window from which there is no further exit
     first_ok = 0 if len(idx) == 0 else int(idx[-1]) + 1
-    if first_ok >= len(mov)
+    if first_ok >= len(mov):
         return float('nan')
     return max(t0 + settle_min, float(tt[first_ok + n - 1]))
 
