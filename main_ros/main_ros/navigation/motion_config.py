@@ -8,7 +8,7 @@ def expand(path):
     return pathlib.Path(os.path.expandvars(os.path.expanduser(str(path))))
 
 CONFIG_NAME = 'puzzlebot.yaml'
-DEFAULT_CALIB_DIR = '~/ros2_ws/src/main_ros/calib'
+DEFAULT_CALIB_DIR = '~/ros2_ws/src/main_ros/main_ros/navigation/calibration'
 RUNS_COLUMNS = ['run', 'type', 'target', 'speed', 'csv', 'odom_x', 'odom_y', 'odom_theta_deg',
 'odom_dist', 'odom_turn_deg', 'real_x', 'real_y', 'real_theta_deg', 'note']
 
