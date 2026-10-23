@@ -46,6 +46,10 @@ setup(
             os.path.join('share', package_name, 'voice', 'launch'),
             glob('main_ros/voice/launch/*.launch.py')
         ),
+        (
+            os.path.join('share', package_name, 'config'), 
+            glob('config/*.yaml')
+        ),
     ],
 
     install_requires=[
@@ -73,6 +77,11 @@ setup(
 
             # Infrastructure: Differential drive
             'differential_drive = main_ros.infrastructure.scripts.differential_drive:main',
+
+            # Navigation: Motion tests to measure noise for EKF odometry prediction model
+            'motion_noise_test = main_ros.navigation.motion_noise_test:main',
+            # Navigation: Analysis for EKF odometry prediction error
+            'analyze_motion_noise = main_ros.navigation.analyze_motion_noise:main',
 
             # Voice: command recognition (HMM) -> /voice_command
             'voice_program_manager = main_ros.voice.voice_program_manager:main',

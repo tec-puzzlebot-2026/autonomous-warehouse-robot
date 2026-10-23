@@ -7,13 +7,33 @@
   <maintainer email="a01285451@tec.mx">goma</maintainer>
   <license>TODO: License declaration</license>
 
-  <depend>rclpy</depend>
+  <!-- Build and Execution Dependencies -->
+  <depend>cv_bridge</depend>
   <depend>geometry_msgs</depend>
+  <depend>rclpy</depend>
   <depend>sensor_msgs</depend>
   <depend>std_msgs</depend>
 
+  <!-- ROS 2 Execution Dependencies -->
+  <exec_depend>camera_calibration</exec_depend>
+  <exec_depend>image_proc</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>rclcpp_components</exec_depend>
+  <exec_depend>ros2launch</exec_depend>
+  <exec_depend>rosbag2_py</exec_depend>
+  <exec_depend>rosidl_runtime_py</exec_depend>
   <exec_depend>rqt_image_view</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
 
+  <!-- Python / System Dependencies -->
+  <exec_depend>python3-matplotlib</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+
+    <!-- Testing Dependencies -->
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
   <test_depend>ament_pep257</test_depend>
