@@ -29,10 +29,10 @@ setup(
             glob('launch/*.py')
         ),
 
-        # Infrastructure launch files
+        # Utils launch files
         (
-            os.path.join('share', package_name, 'infrastructure', 'launch'),
-            glob('main_ros/infrastructure/launch/*.launch.py')
+            os.path.join('share', package_name, 'utils', 'launch'),
+            glob('main_ros/utils/launch/*.launch.py')
         ),
 
         # Vision launch files
