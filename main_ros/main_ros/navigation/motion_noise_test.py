@@ -97,8 +97,37 @@ class Runner(Node):
             w.writerows(self.rows)
         return path
 
-def build_plan(test, only=None):
-    """(description, v, w, seconds) list."""
+LIMITS = {'v': None, 'w': None}     # puzzlebot.yaml  max_linear_speed / max_angular_speed
+
+def wheel_limit_ok(model, v, w, max_wheel):
+    """True if no wheel exceeds the limits of the differential_drive controller
+    and (v, ω) do not exceed the robot's limits."""
+    if LIMITS['v'] and abs(v) > LIMITS['v'] + 1e-9:
+        return False
+    if LIMITS['w'] and abs(w) > LIMITS['w'] + 1e-9:
+        return False
+    if not max_wheel:
+        return True
+    wR, wL = model.twist_to_wheels(v, w)
+    return max(abs(wR), abs(wL)) <= max_wheel + 1e-9
+
+def build_plan(test, only=None, model=None, max_wheel=None):
+    """(description, v, w, seconds) list. Omit speeds that the controller would trim."""
+    if model is not None and max_wheel:
+        dropped = [x for x in test.get('straight_speeds', [])
+                    if not wheel_limit_ok(model, x, 0.0, max_wheel)]
+        dropped_w = [x for x in test.get('turn_speeds', [])
+                        if not wheel_limit_ok(model, 0.0, x, max_wheel)]
+        test = dict(test)
+        test['straight_speeds'] = [x for x in test.get('straight_speeds', []) if x not in dropped]
+        test['turn_speeds'] = [x for x in test.get('turn_speeds', []) if x not in dropped_w]
+        if dropped or dropped_w:
+            print('NOTICE: max_wheel_speed = %.2f rad/s -> wheel limit v = %.3f m/s, ω = %.2f rad/s '
+                    '(plus max_linear/angular_speed). '
+                    'Straight segments %s and turns %s are omitted. To measure them, increase max_wheel_speed in the '
+                    'launcher and in puzzlebot.yaml (if the motors allow it).' % (
+                        max_wheel, max_wheel * model.r, 2 * max_wheel * model.r / model.L,
+                        dropped, dropped_w))
     seg_time = float(test.get('segment_time', 15.0))
     max_dist = float(test.get('max_distance'), 1.5)
     repeats = int(test.get('repeats', 1))
@@ -116,8 +145,10 @@ def build_plan(test, only=None):
                 plan.append(('clockwise turn w=%.2f rad/s' % w, 0.0, -w, seg_time))
     return plan
 
-def run_sweep(node, test, only, confirm):
-    plan = build_plan(test, only)
+def run_sweep(node, test, only, confirm, model=None, max_wheel=None):
+    plan = build_plan(test, only, model, max_wheel)
+    if not plan:
+        sys.exit('None of the speeds in the plan fit within max_wheel_speed; check puzzlebot.yaml.')
     pause = float(test.get('pause_time', 2.0))
     total = sum(p[3] + pause for p in plan)
     print('Sweep: %d sections, ~%.1f min. Let ~%.1f m free in front and back.' % (len(plan), total / 60.0, float(test.get('max_distance', 1.5))))
@@ -182,6 +213,9 @@ def main(argv=None):
 
     cfg = load_config(a.config)
     model = MotionModel(cfg['robot'].get('wheel_radius', 0.05), cfg['robot'].get('wheelbase', 0.19))
+    max_wheel = float(cfg['robot'].get('max_wheel_speed', 0.0) or 0.0)
+    LIMITS['v'] = float(cfg['robot'].get('max_linear_speed', 0.0) or 0.0) or None
+    LIMITS['w'] = float(cfg['robot'].get('max_angular_speed', 0.0) or 0.0) or None
     out_dir = motion_dir()
     stamp = time.strftime('%Y%m%d_%H%M%S')
 
@@ -197,7 +231,16 @@ def main(argv=None):
             path = node.save(out_dir / ('sweep_%s.csv' % stamp))
             print('\nSaved %s \nAnalyze with: ros2 run main_ros analyze_motion_noise' % path)
             return
-        speed = a.speed if a.speed is not None else (0.15 if a.mode == 'straight' else 1.0)
+        if a.speed is not None:
+            speed = a.speed
+        elif a.mode == 'straight':      # 0.15 m/s or 80% of wheel limit
+            speed = min(0.15, 0.8 * max_wheel * model.r) if max_wheel else 0.15
+        else:
+            speed = min(1.0, 0.8 * 2 * max_wheel * model.r / model.L) if max_wheel else 1.0
+        v_chk, w_chk = (speed, 0.0) if a.mode == 'straight' else (0.0, speed)
+        if not wheel_limit_ok(model, v_chk, w_chk, max_wheel):
+            sys.exit('--speed %.3f exceeds max_wheel_speed (%.2f rad/s) or of the limits of '
+                     'robot in puzzlebot.yaml.' % (speed, max_wheel))
         target = a.distance if a.mode == 'straight' else a.angle
         input('Place the robot at the starting mark (axis over the origin, facing +x). '
             'Press Enter to start ')
