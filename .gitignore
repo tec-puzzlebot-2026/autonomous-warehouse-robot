@@ -249,6 +249,9 @@ recordings_*.zip
 *.mcap
 
 # Vision: extracted frames, augmentation, outputs
+**/vision/camera/calibration/data
+**/vision/camera/calibration/images
+**/vision/camera/calibration/whiteimages
 **/vision/training/data/
 **/vision/training/frames*/
 **/vision/training/output/
