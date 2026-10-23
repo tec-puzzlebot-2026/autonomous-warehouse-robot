@@ -8,7 +8,7 @@ def expand(path):
     return pathlib.Path(os.path.expandvars(os.path.expanduser(str(path))))
 
 CONFIG_NAME = 'puzzlebot.yaml'
-DEFAULT_CALIB_DIR = '~/ros2_ws/src/main_ros/main_ros/navigation/calibration'
+DEFAULT_NAV_CALIB_DIR = '~/ros2_ws/src/main_ros/main_ros/navigation/calibration'
 RUNS_COLUMNS = ['run', 'type', 'target', 'speed', 'csv', 'odom_x', 'odom_y', 'odom_theta_deg',
 'odom_dist', 'odom_turn_deg', 'real_x', 'real_y', 'real_theta_deg', 'note']
 
@@ -32,4 +32,4 @@ def load_config(path=None):
     return {'path': path, 'robot': block('puzzlebot'), 'test': block('motion_noise_test')}
 
 def motion_dir():
-    return expand(DEFAULT_CALIB_DIR) / 'motion'
+    return expand(DEFAULT_NAV_CALIB_DIR) / 'motion'

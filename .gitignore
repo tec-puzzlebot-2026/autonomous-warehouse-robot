@@ -255,6 +255,7 @@ recordings_*.zip
 **/vision/training/data/
 **/vision/training/frames*/
 **/vision/training/output/
+**/navigation/calibration/
 
 # Isaac Sim digital twin: phone video and extracted frames
 **/vision/issacsim/data/
