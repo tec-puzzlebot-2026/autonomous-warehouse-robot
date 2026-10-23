@@ -46,6 +46,10 @@ setup(
             os.path.join('share', package_name, 'voice', 'launch'),
             glob('main_ros/voice/launch/*.launch.py')
         ),
+        (
+            os.path.join('share', package_name, 'config'), 
+            glob('config/*.yaml')
+        ),
     ],
 
     install_requires=[
@@ -74,8 +78,24 @@ setup(
             # Infrastructure: Differential drive
             'differential_drive = main_ros.infrastructure.scripts.differential_drive:main',
 
+            # Navigation: Motion tests to measure noise for EKF odometry prediction model
+            'motion_noise_test = main_ros.navigation.motion_noise_test:main',
+            # Navigation: Analysis for EKF odometry prediction error
+            'analyze_motion_noise = main_ros.navigation.analyze_motion_noise:main',
+
             # Voice: command recognition (HMM) -> /voice_command
             'voice_program_manager = main_ros.voice.voice_program_manager:main',
+
+            # Vision: Raspberry Pi Camera v2 untouched sensor image and info publishing
+            'camera_node = main_ros.vision.camera.camera_node:main',
+            # Vision: Color corrects and rectifies sensor image
+            'image_processing = main_ros.vision.camera.image_processing_node:main',
+            # Vision: Latest *raw* camera frame as image saving
+            'image_saver = main_ros.vision.camera.calibration.image_saver:main',
+            # Vision: Intrinsic camera calibration with OpenCV
+            'calibrate_intrinsics = main_ros.vision.camera.calibration.calibrate_intrinsics:main',
+            # Vision: Color calibration
+            'color_calibrate = main_ros.vision.camera.calibration.color_calibrate:main',
 
             # Vision: YOLO webcam test
             'yolo_webcam_test = main_ros.vision.testing.yolo_webcam_test:main',

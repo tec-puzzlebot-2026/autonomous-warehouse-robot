@@ -1,0 +1,24 @@
+# Robot (Puzzlebot from Manchester Robotics) and motion model test plan.
+# Read by motion_noise_test, analyze_motion_noise, and ekf_localization.launch.py.
+
+puzzlebot:
+  ros__parameters:
+    wheel_radius: 0.05      # m  -> Verify and correct it using the validation file (runs.csv)
+    wheelbase: 0.19         # m, distance between the wheel contact centers
+    cmd_vel_topic: /cmd_vel
+    enc_right_topic: /VelocityEncR   # std_msgs/Float32, wheel angular velocity in rad/s
+    enc_left_topic: /VelocityEncL
+    enc_right_sign: 1.0     # Enter -1.0 if the encoder yields a negative value when advancing.
+    enc_left_sign: 1.0
+
+motion_noise_test:
+  ros__parameters:
+    # Straight-line segments: each speed is tested in both the forward (+v) and reverse (-v) directions; the robot returns to the starting point.
+    straight_speeds: [0.05, 0.10, 0.15, 0.20, 0.25, 0.30]   # m/s
+    # Turns in place: counter-clockwise (+w) and clockwise (-w) at various speeds.
+    turn_speeds: [0.3, 0.6, 1.0, 1.5, 2.0, 2.5]             # rad/s
+    max_distance: 1.5    # m per straight section (must fit in the sand)
+    segment_time: 15.0   # s maximums per segment (transfers always use this duration)
+    settle_time: 1.0     # s minimum values ​​discarded at the start of each segment (acceleration)
+    pause_time: 2.0      # s stopped between sections
+    repeats: 2           # replications for each speed (more samples in the short segments)
