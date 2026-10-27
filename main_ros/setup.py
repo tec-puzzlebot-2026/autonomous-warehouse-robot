@@ -11,7 +11,7 @@ setup(
     name=package_name,
     version='0.0.0',
 
-    packages=find_packages(exclude=['test']),
+    packages=find_packages(include=[package_name, f'{package_name}.*'], exclude=['test']),
 
     data_files=[
         (
@@ -72,11 +72,11 @@ setup(
     entry_points={
         'console_scripts': [
 
-            # Infrastructure: Debug teleoperation
-            'debug_teleup_script = main_ros.infrastructure.scripts.debug_teleup_script:main',
+            # Utils: Debug teleoperation
+            'debug_teleup_script = main_ros.utils.scripts.debug_teleup_script:main',
 
-            # Infrastructure: Differential drive
-            'differential_drive = main_ros.infrastructure.scripts.differential_drive:main',
+            # Utils: Differential drive
+            'differential_drive = main_ros.utils.scripts.differential_drive:main',
 
             # Navigation: Motion tests to measure noise for EKF odometry prediction model
             'motion_noise_test = main_ros.navigation.motion_noise_test:main',

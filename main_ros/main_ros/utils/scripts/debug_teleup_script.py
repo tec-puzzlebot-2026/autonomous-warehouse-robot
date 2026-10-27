@@ -12,11 +12,15 @@ JETSON_HOST = "puzzlebot@jetson.local"
 SSH_OPTIONS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
                "-o", "StrictHostKeyChecking=accept-new"]
 
-HOST_ROS_SETUP = "/home/goma/ros2_ws/puzzlebot/autonomous-warehouse-robot/install/setup.bash"
+HOST_ROS_SETUP = "/home/chrisrvt/autonomous-warehouse-robot/install/setup.bash"
+# HOST_ROS_SETUP = "/home/goma/ros2_ws/puzzlebot/autonomous-warehouse-robot/install/setup.bash"
 
 HOST_WORKSPACE_SETUP = os.path.expanduser(
-    "~/ros2_ws/puzzlebot/autonomous-warehouse-robot/install/setup.bash"
+    "~/autonomous-warehouse-robot/install/setup.bash"
 )
+# HOST_WORKSPACE_SETUP = os.path.expanduser(
+#     "~/ros2_ws/puzzlebot/autonomous-warehouse-robot/install/setup.bash"
+# )
 
 JETSON_ROS_SETUP = "/opt/ros/humble/setup.bash"
 JETSON_WORKSPACE_SETUP = "/home/puzzlebot/ros2_packages_ws/install/setup.bash"
@@ -76,7 +80,7 @@ def build_remote_command():
         f"source {shlex.quote(JETSON_WORKSPACE_SETUP)}; "
         'echo "[JETSON] Starting micro-ROS agent..."; '
         "exec ros2 run micro_ros_agent micro_ros_agent "
-        f"serial --dev {shlex.quote(JETSON_SERIAL_PORT)} -b {JETSON_BAUD_RATE}"
+        f"serial --dev {shlex.quote(JETSON_SERIAL_PORT)} -b {JETSON_BAUD_RATE} -m 512"
     )
     return "bash -c " + shlex.quote(script)
 
