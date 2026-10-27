@@ -80,7 +80,7 @@ def build_remote_command():
         f"source {shlex.quote(JETSON_WORKSPACE_SETUP)}; "
         'echo "[JETSON] Starting micro-ROS agent..."; '
         "exec ros2 run micro_ros_agent micro_ros_agent "
-        f"serial --dev {shlex.quote(JETSON_SERIAL_PORT)} -b {JETSON_BAUD_RATE} -m 512"
+        f"serial --dev {shlex.quote(JETSON_SERIAL_PORT)} -b {JETSON_BAUD_RATE}"
     )
     return "bash -c " + shlex.quote(script)
 
