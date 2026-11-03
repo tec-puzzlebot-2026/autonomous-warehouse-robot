@@ -266,3 +266,60 @@ recordings_*.zip
 **/voice/data/
 **/voice/scripts/feature_cache.pkl
 **/voice/scripts/log_*.txt
+
+# ---------- data: never commit ----------
+# ROS bags
+*.db3
+*.mcap
+*.bag
+**/raw_bags/
+metadata.yaml
+
+# images
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.tif
+*.tiff
+*.webp
+
+# video / audio
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.wav
+*.mp3
+
+# 3D / point clouds / archives
+*.ply
+*.pcd
+*.zip
+*.tar
+*.tar.gz
+*.7z
+
+# datasets and generated folders
+**/data/
+**/frames*/
+**/output/
+**/check*/
+**/yolo_dataset/
+**/labels_auto*/
+**/runs/
+**/exports/
+**/outputs/
+**/voice/scripts/feature_cache.pkl
+**/voice/scripts/log_*.txt
+
+# model weights (remove these two lines if the team wants models in git)
+*.pt
+*.onnx
+
+# python / ROS build
+__pycache__/
+*.pyc
+build/
+install/
+log/
