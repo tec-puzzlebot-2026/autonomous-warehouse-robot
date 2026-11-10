@@ -39,7 +39,8 @@ class Runner(Node):
         rc = robot_cfg
         self.sign_R = float(rc.get('enc_right_sign', 1.0))
         self.sign_L = float(rc.get('enc_left_sign', 1.0))
-        self.pub = self.create_publisher(Twist, rc.get('cmd_vel_topic', '/cmd_vel'), 10)
+        self.cmd_topic = rc.get('cmd_vel_topic', '/cmd_vel')
+        self.pub = self.create_publisher(Twist, self.cmd_topic, 10)
         self.create_subscription(Float32, rc.get('enc_right_topic', '/VelocityEncR'), self.on_R, qos_profile_sensor_data)
         self.create_subscription(Float32, rc.get('enc_left_topic', '/VelocityEncL'), self.on_L, qos_profile_sensor_data)
         self.rows = []
@@ -83,6 +84,20 @@ class Runner(Node):
     def stop(self, seconds=1.0):
         self.hold(0.0, 0.0, seconds)
 
+    def check_other_publishers(self, force=False):
+        """Abort if another node publishes on our command topic (two sources fight)."""
+        end = time.monotonic() + 1.5                 # DDS discovery
+        while time.monotonic() < end:
+            rclpy.spin_once(self, timeout_sec=0.1)
+        n = self.count_publishers(self.cmd_topic) - 1  # minus ourselves
+        if n > 0:
+            msg = ('%d other node(s) publish on %s. The differential_drive relay publishes '
+                   'zeros at 20 Hz on /cmd_vel, and teleop publishes on /cmd_vel_in; two '
+                   'sources would fight over the robot.' % (n, self.cmd_topic))
+            if not force:
+                sys.exit(msg + ' Close them (or use --force if the other node is idle).')
+            print('WARNING: ' + msg)
+
     def wait_encoders(self, timeout=5.0):
         end = time.monotonic() + timeout
         while time.monotonic() < end and (self.n_R == 0 or self.n_L == 0):
@@ -124,8 +139,8 @@ def build_plan(test, only=None, model=None, max_wheel=None):
         if dropped or dropped_w:
             print('NOTICE: max_wheel_speed = %.2f rad/s -> wheel limit v = %.3f m/s, ω = %.2f rad/s '
                     '(plus max_linear/angular_speed). '
-                    'Straight segments %s and turns %s are omitted. To measure them, increase max_wheel_speed in the '
-                    'launcher and in puzzlebot.yaml (if the motors allow it).' % (
+                    'Straight segments %s and turns %s are omitted. To measure them, raise the limits in '
+                    'puzzlebot.yaml AND the relay (max_linear / max_angular) together.' % (
                         max_wheel, max_wheel * model.r, 2 * max_wheel * model.r / model.L,
                         dropped, dropped_w))
     seg_time = float(test.get('segment_time', 15.0))
@@ -154,9 +169,9 @@ def run_sweep(node, test, only, confirm, model=None, max_wheel=None):
     print('Sweep: %d sections, ~%.1f min. Let ~%.1f m free in front and back.' % (len(plan), total / 60.0, float(test.get('max_distance', 1.5))))
     for i, (desc, v, w, dur) in enumerate(plan):
         if confirm:
-            input(['[%d/%d] %s, %.1f s. Enter to start (Ctrl+C abort)' % (i + 1, len(plan), desc, dur)])
+            input('[%d/%d] %s, %.1f s. Enter to start (Ctrl+C abort) ' % (i + 1, len(plan), desc, dur))
         else:
-            print('[%d/%d] % s, %.1f s' % (i + 1, len(plan), desc, dur))
+            print('[%d/%d] %s, %.1f s' % (i + 1, len(plan), desc, dur))
         node.hold(v, w, dur)
         node.stop(pause)
 
@@ -209,6 +224,7 @@ def main(argv=None):
     p.add_argument('--speed', type=float, default=None, help='m/s or rad/s')
     p.add_argument('--config', default=None)
     p.add_argument('--note', default='')
+    p.add_argument('--force', action='store_true', help='run even if another node publishes on the command topic')
     a = p.parse_args(argv)
 
     cfg = load_config(a.config)
@@ -222,14 +238,22 @@ def main(argv=None):
     rclpy.init()
     node = Runner(cfg['robot'])
     try:
+        node.check_other_publishers(a.force)
         if not node.wait_encoders():
-            sys.exit('No data is being received from the encoders (%s, %s). Is the Hackerboard connected? '
-                    'and running micro-ROS?' % (cfg['robot'].get('enc_right_topic'),
-                                                cfg['robot'].get('enc_left_topic')))
+            seen = sorted(n for n, _ in node.get_topic_names_and_types()
+                          if n not in ('/parameter_events', '/rosout'))
+            sys.exit('No data is being received from the encoders (%s, %s).\n'
+                     'Topics visible from here: %s\n'
+                     '  - empty list: the micro-ROS agent is not running or this machine cannot see it.\n'
+                     '  - /cmd_vel listed but no encoder topic: this firmware uses other names;\n'
+                     '    set enc_right_topic / enc_left_topic in puzzlebot.yaml.' % (
+                         cfg['robot'].get('enc_right_topic'),
+                         cfg['robot'].get('enc_left_topic'), seen or 'none'))
         if a.mode == 'sweep':
-            run_sweep(node, cfg['test'], a.only, confirm=not a.yes, model=model, max_wheel=max_wheel)
+            run_sweep(node, cfg['test'], a.only, confirm=not a.yes, model=model,
+                      max_wheel=max_wheel)
             path = node.save(out_dir / ('sweep_%s.csv' % stamp))
-            print('\nSaved %s \nAnalyze with: ros2 run main_ros analyze_motion_noise' % path)
+            print('\nSaved %s \nAnalyze with: ros2 run main_ros motion_noise_analysis' % path)
             return
         if a.speed is not None:
             speed = a.speed

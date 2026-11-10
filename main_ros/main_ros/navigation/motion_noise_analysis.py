@@ -1,9 +1,9 @@
 """Extended Kalman Filter (EKF) Prediction Error Margin 
 (motion model), based on encoder data.
 
-ros2 run main_ros analyze_motion_noise                          # processes all sweep_*.csv
-ros2 run main_ros analyze_motion_noise --bag ~/bags/sweep_01    # or from a rosbag2
-ros2 run main_ros analyze_motion_noise --plots
+ros2 run main_ros motion_noise_analysis                          # processes all sweep_*.csv
+ros2 run main_ros motion_noise_analysis --bag ~/bags/sweep_01    # or from a rosbag2
+ros2 run main_ros motion_noise_analysis --plots
 
 Writes to <calib_dir>/motion/:
     motion_model.yaml       r, L, σ0 y k por rueda, α  -> Q_k del EKF
@@ -32,6 +32,14 @@ from main_ros.navigation.motion_model import MotionModel, dead_reckon, wrap
 from main_ros.navigation.motion_config import load_config, motion_dir
 
 CHI2_3D0F_95 = 7.815
+
+def _is_straight(kind):          # works with the English or the Spanish label of motion_noise.kind_of
+    return kind in ('straight', 'recto')
+
+
+def _is_turn(kind):
+    return kind in ('turn', 'giro')
+
 
 def expand(path):
     return pathlib.Path(os.path.expandvars(os.path.expanduser(str(path))))
@@ -76,7 +84,7 @@ def validate(rep, model, runs, runs_dir):
         try:
             d = mn.load_log(runs_dir / r['csv'])
         except FileNotFoundError:
-            rep('- run %s: missing %s' % r['run'], r['csv'])
+            rep('- run %s: missing %s' % (r['run'], r['csv']))
             continue
         eR, eL = d['encR'], d['encL']
         if len(eR) < 10 or len(eL) < 10:
@@ -85,7 +93,7 @@ def validate(rep, model, runs, runs_dir):
         wL = np.interp(t, eL[:, 0], eL[:, 1])
         s, P, traj = dead_reckon(model, t, eR[:, 1], wL)
         real = np.array([r['real'][0], r['real'][1], math.radians(r['real'][2])])
-        e = np.array([real][0] - s[0], real[1] - s[1], wrap(real[2] - s[2]))
+        e = np.array([real[0] - s[0], real[1] - s[1], wrap(real[2] - s[2])])
         try:
             n = float(e @ np.linalg.solve(P, e))
         except np.linalg.LinAlgError:
@@ -126,6 +134,7 @@ def validate(rep, model, runs, runs_dir):
     if turn_ratio:
         # ω_real / ω_odom = (r_real/r)·(L/L_real)  =>  L_real = L · r_scale · (giro_odom/giro_real)
         ratio = float(np.mean(turn_ratio))
+        out['L_scale'] = out.get('r_scale', 1.0) * ratio
         rep('Rotations: odometry / actual rotation = %.4f (n=%d) -> suggested distance between wheels '
         '%.4f m (actual %.4f; it already includes the radius correction).' % (
         ratio, len(turn_ratio), model.L * out['L_scale'], model.L))
@@ -148,7 +157,7 @@ def main(argv=None):
     model = MotionModel(rc.get('wheel_radius', 0.05), rc.get('wheelbase', 0.19))
     out_dir = expand(a.out) if a.out else motion_dir()
     out_dir.mkdir(parents=True, exist_ok=True)
-    settle = a.settle if a.settke is not None else float(tc.get('settle_time', 1.0))
+    settle = a.settle if a.settle is not None else float(tc.get('settle_time', 1.0))
 
     sources = []
     if a.bag:
@@ -159,7 +168,8 @@ def main(argv=None):
                 rc.get('enc_left_topic', '/VelocityEncL'),
                 float(rc.get('enc_right_sign', 1.0)), float(rc.get('enc_left_sign', 1.0))
             )))
-    csvs = a.csv if a.csv is not None else sorted(glob.glob(str(out_dir / 'sweep_*.csv')))
+    csvs = a.csv if a.csv is not None else sorted(
+        p for p in glob.glob(str(out_dir / 'sweep_*.csv')) if not p.endswith('_partial.csv'))
     for c in csvs if not a.bag or a.csv else []:
         sources.append((c, mn.load_log(expand(c))))
     if not sources:
@@ -189,7 +199,7 @@ def main(argv=None):
     
     # Encoder signs: advance straight must give the two wheels with the command's sign
     for r in good:
-        if r['kind'] == 'straight' and (np.sign(r['wR_mean']) != np.sign(r['v_cmd'])
+        if _is_straight(r['kind']) and (np.sign(r['wR_mean']) != np.sign(r['v_cmd'])
         or np.sign(r['wL_mean']) != np.sign(r['v_cmd'])):
             rep('')
             rep('NOTICE: on a straight stretch v=%.2f a wheel spins in reverse (ωR=%.2f, ωL=%.2f). '
@@ -205,7 +215,7 @@ def main(argv=None):
         '0.5 s moving average stabilizes. Encoder frequency ≈ %.0f Hz.' % (
             len(good), len(bad), settle, float(np.median([r['rate_hz'] for r in good]))))
     rep('')
-    rep('| tipo | v cmd m/s | ω cmd rad/s | tramos | arranque s | ωR media | σ ωR | ωL media '
+    rep('| type | v cmd m/s | ω cmd rad/s | sections | start s | ωR media | σ ωR | ωL media '
         '| σ ωL | v media | σ v mm/s | ω media | σ ω rad/s |')
     rep('|---|---|---|---|---|---|---|---|---|---|---|---|---|')
     for g in groups:
@@ -223,8 +233,8 @@ def main(argv=None):
     yL = [g['wL_std'] for g in groups]
     s0R, kR, r2R = mn.fit_linear(xR, yR)
     s0L, kL, r2L = mn.fit_linear(xL, yL)
-    st = [g for g in groups if g['kind'] == 'straight']
-    tu = [g for g in groups if g['kind'] == 'turn']
+    st = [g for g in groups if _is_straight(g['kind'])]
+    tu = [g for g in groups if _is_turn(g['kind'])]
     fv = mn.fit_linear([g['v_cmd'] for g in st], [g['v_std'] for g in st]) if st else None
     fw = mn.fit_linear([g['w_cmd'] for g in tu], [g['w_std'] for g in tu]) if tu else None
     rep('')
@@ -275,6 +285,20 @@ def main(argv=None):
     '(odometry only, without camera corrections).' % (
         v_ex, 1000 * sd[0], 1000 * sd[1], math.degrees(sd[2])))
 
+    result = {'motion_model': model.to_dict(),
+              'encoder_rate_hz': rate,
+              'fits': {'right': [s0R, kR, r2R], 'left': [s0L, kL, r2L],
+                       'v_straight': list(fv) if fv else None,
+                       'w_turn': list(fw) if fw else None},
+              'suggested': val or {}}
+    path = out_dir / 'motion_model.yaml'
+    with open(str(path), 'w') as f:
+        yaml.safe_dump(result, f, sort_keys=False)
+    (out_dir / 'motion_report.md').write_text('\n'.join(rep.lines) + '\n')
+    print('\nSaved: %s\n       %s' % (path, out_dir / 'motion_report.md'))
+    if a.plots:
+        make_plots(out_dir, groups, (s0R, kR), (s0L, kL), fv, fw, good)
+
 def make_plots(out_dir, groups, fR, fL, fv, fw, segs):
     try:
         import matplotlib
@@ -295,20 +319,20 @@ def make_plots(out_dir, groups, fR, fL, fv, fw, segs):
     ax.set_ylabel('σ ω rueda [rad/s]')
     ax.set_title('Noise from each wheel')
     ax.legend()
-    for ax, kind, key, fit, xl, yl in ((axes[1], 'recto', 'v', fv, '|v| commanded [m/s]',
+    for ax, kind, key, fit, xl, yl in ((axes[1], 'straight', 'v', fv, '|v| commanded [m/s]',
                                     'σ v [m/s]'),
-                                    (axes[2], 'giro', 'w', fw, '|ω| commanded [rad/s]',
+                                    (axes[2], 'turn', 'w', fw, '|ω| commanded [rad/s]',
                                     'σ ω [rad/s]')):
-        gs = [g for g in groups if g['kind'] == kind]
+        gs = [g for g in groups if (_is_straight if kind == 'straight' else _is_turn)(g['kind'])]
         if gs and fit:
             x = np.array([g[key + '_cmd'] for g in gs])
             ax.scatter(x, [g[key + '_std'] for g in gs])
             xx = np.linspace(0, x.max() * 1.05, 50)
-            ax.plot(xx, fit[0] + fit[1] * xx, '--', label=='σ = %.4f + %.4f·x' % fit[:2])
+            ax.plot(xx, fit[0] + fit[1] * xx, '--', label='σ = %.4f + %.4f·x' % fit[:2])
             ax.legend()
         ax.set_xlabel(xl)
         ax.set_ylabel(yl)
-        ax.set_title('Straight' if kind == 'recto' else 'Turns in place')
+        ax.set_title('Straight' if kind == 'straight' else 'Turns in place')
     for ax in axes:
         ax.grid(alpha=0.3)
     fig.tight_layout()
@@ -320,7 +344,7 @@ def make_plots(out_dir, groups, fR, fL, fv, fw, segs):
     for ax, r in zip(axes[:, 0], segs[:n]):
         d = r['data']
         for key, lab in (('encR', 'ωR'), ('encL', 'ωL')):
-            e = r['data']
+            e = d[key]
             m = (e[:, 0] >= r['t0'] - 0.5) & (e[:, 0] <= r['t1'] + 0.5)
             ax.plot(e[m, 0] - r['t0'], e[m, 1], lw=0.8, label=lab)
         ax.axvspan(r['win_start'] - r['t0'], r['win_end'] - r['t0'], alpha=0.15, color='g')
