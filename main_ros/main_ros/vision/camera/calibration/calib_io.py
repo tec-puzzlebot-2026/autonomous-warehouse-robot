@@ -17,7 +17,36 @@ import cv2
 import numpy as np
 import yaml
 
-DEFAULT_CAMERA_CALIB_DIR = '~/ros2_ws/src/main_ros/main_ros/vision/camera/calibration'
+_INSTALLED = ('install', 'build', 'site-packages', 'dist-packages')
+
+
+def _default_camera_calib_dir():
+    """<repo>/main_ros/main_ros/vision/camera/calibration, with no hard-coded path.
+
+    1) env var MAIN_ROS_CAMERA_CALIB_DIR; 2) the folder this file lives in (git clone, Docker,
+    colcon --symlink-install); 3) if this is an installed copy (install/, build/, site-packages:
+    a rebuild would erase the data) the source tree found above the current directory;
+    4) ~/main_ros_camera_calibration.
+    """
+    env = os.environ.get('MAIN_ROS_CAMERA_CALIB_DIR')
+    if env:
+        return env
+    here = pathlib.Path(__file__).resolve().parent            # .../vision/camera/calibration
+    if not any(part in _INSTALLED for part in here.parts):
+        return str(here)
+    cwd = pathlib.Path.cwd().resolve()
+    for p in [cwd] + list(cwd.parents):
+        for cand in (p, p / 'calibration', p / 'camera' / 'calibration',
+                     p / 'vision' / 'camera' / 'calibration',
+                     p / 'main_ros' / 'vision' / 'camera' / 'calibration',
+                     p / 'main_ros' / 'main_ros' / 'vision' / 'camera' / 'calibration'):
+            if (cand / 'calib_io.py').is_file() \
+                    and not any(part in _INSTALLED for part in cand.parts):
+                return str(cand)
+    return '~/main_ros_camera_calibration'
+
+
+DEFAULT_CAMERA_CALIB_DIR = _default_camera_calib_dir()
 CAMERA_INFO_FILE = 'data/camera_info.yaml'
 INTRINSICS_NPZ_FILE = 'data/intrinsicCalibration.npz'
 COLOR_NPZ_FILE = 'data/colorCalibration.npz'

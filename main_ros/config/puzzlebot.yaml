@@ -3,8 +3,8 @@
 
 puzzlebot:
   ros__parameters:
-    wheel_radius: 0.05      # m  -> Verify and correct it using the validation file (runs.csv)
-    wheelbase: 0.19         # m, distance between the wheel contact centers
+    wheel_radius: 0.0511      # m  -> Verify and correct it using the validation file (runs.csv)
+    wheelbase: 0.1791         # m, distance between the wheel contact centers
     max_wheel_speed: 10.0  # rad/s (motors reach until ±15 rad/s; ±10 for safety)
     # Limits of the complete robot; the plan and --speed do not exceed them.
     max_linear_speed: 1.0  # m/s

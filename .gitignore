@@ -227,6 +227,7 @@ log/
 __pycache__/
 *.pyc
 *.pyo
+*.py[cod]
 
 # VS Code
 .vscode/
@@ -243,10 +244,13 @@ recordings_*.zip
 # ============================================================
 
 # ROS 2 bags
+rosbag2_*/
 **/raw_bags/
 *.zip
 *.db3
 *.mcap
+*.bag
+metadata.yaml
 
 # Vision: extracted frames, augmentation, outputs
 **/vision/camera/calibration/data
@@ -255,7 +259,8 @@ recordings_*.zip
 **/vision/training/data/
 **/vision/training/frames*/
 **/vision/training/output/
-**/navigation/calibration/
+**/navigation/calibration/motion/sweep_*.csv
+**/navigation/calibration/motion/*.png
 
 # Isaac Sim digital twin: phone video and extracted frames
 **/vision/issacsim/data/
@@ -266,3 +271,54 @@ recordings_*.zip
 **/voice/data/
 **/voice/scripts/feature_cache.pkl
 **/voice/scripts/log_*.txt
+
+# ---------- data: never commit ----------
+
+# images
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.tif
+*.tiff
+*.webp
+
+# video / audio
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.wav
+*.mp3
+
+# 3D / point clouds / archives
+*.ply
+*.pcd
+*.zip
+*.tar
+*.tar.gz
+*.7z
+
+# datasets and generated folders
+**/data/
+**/frames*/
+**/output/
+**/check*/
+**/yolo_dataset/
+**/labels_auto*/
+**/runs/
+**/exports/
+**/outputs/
+**/voice/scripts/feature_cache.pkl
+**/voice/scripts/log_*.txt
+
+# model weights (remove these two lines if the team wants models in git)
+*.pt
+*.onnx
+
+# python / ROS build
+__pycache__/
+*.pyc
+build/
+install/
+log/

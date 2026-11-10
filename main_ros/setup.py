@@ -81,7 +81,7 @@ setup(
             # Navigation: Motion tests to measure noise for EKF odometry prediction model
             'motion_noise_test = main_ros.navigation.motion_noise_test:main',
             # Navigation: Analysis for EKF odometry prediction error
-            'analyze_motion_noise = main_ros.navigation.analyze_motion_noise:main',
+            'motion_noise_analysis = main_ros.navigation.motion_noise_analysis:main',
 
             # Voice: command recognition (HMM) -> /voice_command
             'voice_program_manager = main_ros.voice.voice_program_manager:main',
