@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""PuzzleBot host-side SSH, micro-ROS, and teleoperation manager."""
+"""PuzzleBot host-side SSH, micro-ROS, and teleoperation manager.
+
+The Hackerboard firmware subscribes to /cmd_vel (geometry_msgs/Twist) and does
+the differential-drive conversion itself. Keyboard teleop publishes /cmd_vel_in;
+the differential_drive relay limits the speed, stops the robot when commands
+stop, and forwards to /cmd_vel. (Older firmware used /VelocitySetL/R.)
+"""
 import os
 import shlex
 import shutil
@@ -12,23 +18,26 @@ JETSON_HOST = "puzzlebot@jetson.local"
 SSH_OPTIONS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
                "-o", "StrictHostKeyChecking=accept-new"]
 
-HOST_ROS_SETUP = "/home/goma/ros2_ws/puzzlebot/autonomous-warehouse-robot/install/setup.bash"
+HOST_ROS_SETUP = "/opt/ros/humble/setup.bash"
 
-HOST_WORKSPACE_SETUP = os.path.expanduser(
-    "~/ros2_ws/puzzlebot/autonomous-warehouse-robot/install/setup.bash"
-)
+HOST_WORKSPACE_SETUP = "/ws/install/setup.bash"
+# HOST_WORKSPACE_SETUP = os.path.expanduser(
+#     "~/autonomous-warehouse-robot/install/setup.bash"
+# )
+# HOST_WORKSPACE_SETUP = os.path.expanduser(
+#     "~/ros2_ws/puzzlebot/autonomous-warehouse-robot/install/setup.bash"
+# )
 
 JETSON_ROS_SETUP = "/opt/ros/humble/setup.bash"
 JETSON_WORKSPACE_SETUP = "/home/puzzlebot/ros2_packages_ws/install/setup.bash"
 JETSON_SERIAL_PORT = "/dev/ttyUSB0"
 JETSON_BAUD_RATE = 115200
 
-# PLACEHOLDERS. Confirm physical dimensions and firmware command units first.
-WHEEL_RADIUS = 0.05
-WHEEL_SEPARATION = 0.20
-MAX_WHEEL_SPEED = 2.0
-CMD_TIMEOUT = 2.0
-ENABLE_MOTOR_CONTROL = True
+BOARD_TOPICS = ("/cmd_vel",)      # topics the Hackerboard must be subscribed to
+
+MAX_LINEAR = 0.3                  # m/s   (relay speed limits)
+MAX_ANGULAR = 1.5                 # rad/s
+CMD_TIMEOUT = 0.5                 # s without commands -> stop
 
 running = True
 remote_process = None
@@ -130,14 +139,14 @@ def host_ros_env():
 
 
 def check_hackerboard(timeout=25):
-    """Confirm both motor-command subscriptions are visible from host DDS."""
-    log("Waiting for Hackerboard motor subscriptions...")
+    """Confirm the Hackerboard's /cmd_vel subscription is visible from host DDS."""
+    log("Waiting for Hackerboard /cmd_vel subscription...")
     env = host_ros_env()
     deadline = time.monotonic() + timeout
     last = {}
     while time.monotonic() < deadline and running:
         ready = True
-        for topic in ("/VelocitySetL", "/VelocitySetR"):
+        for topic in BOARD_TOPICS:
             try:
                 result = subprocess.run(
                     ["ros2", "topic", "info", topic],
@@ -159,11 +168,11 @@ def check_hackerboard(timeout=25):
             if count < 1:
                 ready = False
         if ready:
-            log("Both motor topics have subscribers visible from host.")
+            log("Hackerboard /cmd_vel subscriber visible from host.")
             return
         time.sleep(1)
     raise RuntimeError(
-        "Hackerboard subscriptions not visible from host. "
+        "Hackerboard /cmd_vel subscription not visible from host. "
         "Check ROS_DOMAIN_ID, ROS_LOCALHOST_ONLY, DDS discovery and agent.\n"
         + "\n".join(f"{topic}: {detail}" for topic, detail in last.items())
     )
@@ -171,14 +180,13 @@ def check_hackerboard(timeout=25):
 
 def start_controller():
     global controller_process
-    log("Starting differential-drive controller...")
+    log("Starting velocity relay (differential_drive)...")
     cmd = (
         f"source {shlex.quote(HOST_ROS_SETUP)} && "
         f"source {shlex.quote(HOST_WORKSPACE_SETUP)} && "
         "exec ros2 run main_ros differential_drive --ros-args "
-        f"-p wheel_radius:={WHEEL_RADIUS} "
-        f"-p wheel_separation:={WHEEL_SEPARATION} "
-        f"-p max_wheel_speed:={MAX_WHEEL_SPEED} "
+        f"-p max_linear:={MAX_LINEAR} "
+        f"-p max_angular:={MAX_ANGULAR} "
         f"-p cmd_timeout:={CMD_TIMEOUT}"
     )
     controller_process = subprocess.Popen(
@@ -186,8 +194,8 @@ def start_controller():
     )
     time.sleep(1)
     if controller_process.poll() is not None:
-        raise RuntimeError("Differential-drive controller exited during startup.")
-    log("Differential-drive controller running.")
+        raise RuntimeError("Velocity relay exited during startup.")
+    log("Velocity relay running.")
 
 
 def start_teleop():
@@ -198,9 +206,9 @@ def start_teleop():
     cmd = (
         f"source {shlex.quote(HOST_ROS_SETUP)} && "
         f"source {shlex.quote(HOST_WORKSPACE_SETUP)} && "
-        "echo 'PUZZLEBOT TELEOP — Ctrl+C to exit' && "
+        "echo 'PUZZLEBOT TELEOP - press z a few times to slow down first. Ctrl+C to exit' && "
         "exec ros2 run teleop_twist_keyboard teleop_twist_keyboard "
-        "--ros-args -r cmd_vel:=/cmd_vel"
+        "--ros-args -r cmd_vel:=/cmd_vel_in"
     )
     teleop_process = subprocess.Popen(
         ["gnome-terminal", "--wait", "--title=PuzzleBot Teleoperation",
@@ -253,7 +261,7 @@ def stop_remote_agent():
 def cleanup():
     log("Shutting down...")
     stop_process(teleop_process, "keyboard teleoperation")
-    stop_process(controller_process, "differential-drive controller")
+    stop_process(controller_process, "velocity relay")
     stop_remote_agent()
     stop_process(remote_process, "Jetson SSH session")
     log("Shutdown complete.")
@@ -272,10 +280,6 @@ def main():
         check_ssh()
         start_jetson()
         check_hackerboard()
-        if not ENABLE_MOTOR_CONTROL:
-            log("SSH, agent, and motor topic checks passed.")
-            log("Motor control DISABLED: wheel parameters and firmware units unverified.")
-            return 0
         start_controller()
         start_teleop()
         log("Teleoperation running. Press Ctrl+C to stop.")
@@ -283,7 +287,7 @@ def main():
             if remote_process is not None and remote_process.poll() is not None:
                 raise RuntimeError("Remote micro-ROS SSH session exited.")
             if controller_process is not None and controller_process.poll() is not None:
-                raise RuntimeError("Differential-drive controller exited.")
+                raise RuntimeError("Velocity relay exited.")
             if teleop_process is not None and teleop_process.poll() is not None:
                 log("Teleoperation terminal closed.")
                 break
