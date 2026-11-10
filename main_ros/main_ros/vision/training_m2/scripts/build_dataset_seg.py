@@ -3,10 +3,17 @@ build_dataset_seg.py - SAM 2 segmentation labels + frames -> YOLO-seg dataset,
 with photometric augmentation of the TRAIN set. Run on the workstation:
 
     cd ~/data/cosmostests/sem9_team
-    ~/venvs/sem9-vision/bin/python vision_m2/build_dataset_seg.py
+    ~/venvs/sem9-vision/bin/python vision_m2/build_dataset_seg.py          # ROI-cropped (Jetson)
+    ~/venvs/sem9-vision/bin/python vision_m2/build_dataset_seg.py --full   # old full-frame dataset
+
+ROI mode (default): every frame is cut to config_m2.ROI, the SAME crop the Jetson makes,
+and every SAM 2 polygon is clipped to it. A box partly inside keeps its visible part
+(the robot also sees cut boxes); pieces smaller than --min-area px are dropped.
+The SAM 2 labels in labels_auto/ stay full-frame, so you can change the ROI and rebuild
+without re-running SAM 2.
 
 Result:
-    vision_m2/yolo_dataset/
+    vision_m2/yolo_dataset_roi/   (or yolo_dataset/ with --full)
         images/train/  labels/train/   clips WITHOUT 'test'/'val' in the name (+ augmented copies)
         images/val/    labels/val/     clips WITH 'test'/'val' in the name - never augmented
         data.yaml
@@ -105,6 +112,62 @@ def augment(img, rng):
 
 
 # ----------------------------------------------------------------------------
+# ROI cropping of polygons
+# ----------------------------------------------------------------------------
+def clip_polygon(pts, x0, y0, x1, y1):
+    """Sutherland-Hodgman: clip a polygon (Nx2, any shape) to the rectangle. Returns Mx2 or []."""
+    def clip(poly, inside, cross):
+        out = []
+        for i in range(len(poly)):
+            cur, prev = poly[i], poly[i - 1]
+            if inside(cur):
+                if not inside(prev):
+                    out.append(cross(prev, cur))
+                out.append(cur)
+            elif inside(prev):
+                out.append(cross(prev, cur))
+        return out
+
+    def at_x(x):
+        return lambda p, q: (x, p[1] + (q[1] - p[1]) * (x - p[0]) / (q[0] - p[0]))
+
+    def at_y(y):
+        return lambda p, q: (p[0] + (q[0] - p[0]) * (y - p[1]) / (q[1] - p[1]), y)
+
+    poly = [tuple(map(float, p)) for p in pts]
+    for inside, cross in ((lambda p: p[0] >= x0, at_x(x0)), (lambda p: p[0] <= x1, at_x(x1)),
+                          (lambda p: p[1] >= y0, at_y(y0)), (lambda p: p[1] <= y1, at_y(y1))):
+        if not poly:
+            break
+        poly = clip(poly, inside, cross)
+    return np.array(poly, np.float32).reshape(-1, 2)
+
+
+def crop_label_lines(lines, W, H, roi, min_area):
+    """Full-frame YOLO-seg lines -> lines normalised to the ROI crop. Returns (lines, n_dropped)."""
+    x0, y0, x1, y1 = roi
+    cw, ch = x1 - x0, y1 - y0
+    out, dropped = [], 0
+    for line in lines:
+        v = line.split()
+        pts = np.array(v[1:], np.float32).reshape(-1, 2) * [W, H]
+        p = clip_polygon(pts, x0, y0, x1, y1)
+        if len(p) < 3 or cv2.contourArea(p) < min_area:
+            dropped += 1
+            continue
+        p = (p - [x0, y0]) / [cw, ch]
+        out.append(v[0] + " " + " ".join(f"{x:.6f} {y:.6f}" for x, y in p.clip(0, 1)))
+    return out, dropped
+
+
+def scaled_roi(W, H):
+    """config ROI is for FRAME_W x FRAME_H; scale it if the frames have another size."""
+    x0, y0, x1, y1 = C.ROI
+    sx, sy = W / C.FRAME_W, H / C.FRAME_H
+    return int(round(x0 * sx)), int(round(y0 * sy)), int(round(x1 * sx)), int(round(y1 * sy))
+
+
+# ----------------------------------------------------------------------------
 def draw_labels(img, label_lines):
     """Draw YOLO-seg polygons:  cls x1 y1 x2 y2 ..."""
     h, w = img.shape[:2]
@@ -129,13 +192,20 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--frames", default=C.FRAMES)
     ap.add_argument("--labels", default=C.LABELS)
-    ap.add_argument("--out", default=C.DATASET)
+    ap.add_argument("--out", help="default: yolo_dataset_roi (or yolo_dataset with --full)")
+    ap.add_argument("--full", action="store_true", help="no ROI crop (old behaviour)")
+    ap.add_argument("--min-area", type=float, default=150,
+                    help="ROI mode: drop clipped polygons smaller than this (px), same as SAM 2 --min-area")
     ap.add_argument("--aug-per-image", type=int, default=1,
                     help="augmented copies per TRAIN image (1 = train set doubles)")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
+    args.out = args.out or (C.DATASET if args.full else C.DATASET_ROI)
     rng = random.Random(args.seed)
     nc = len(C.CLASSES)
+    clipped_away = 0
+    if not args.full:
+        print(f"ROI {C.ROI} of {C.FRAME_W}x{C.FRAME_H}  (network input {C.NET_W}x{C.NET_H})")
 
     if os.path.exists(args.out):
         shutil.rmtree(args.out)
@@ -162,9 +232,17 @@ def main():
                 lines = [l.strip() for l in f if l.strip()]
             name = f"{clip}__{stem}"
             img = cv2.imread(img_path)
+            if not args.full:
+                H, W = img.shape[:2]
+                x0, y0, x1, y1 = scaled_roi(W, H)
+                lines, nd = crop_label_lines(lines, W, H, (x0, y0, x1, y1), args.min_area)
+                clipped_away += nd
+                img = np.ascontiguousarray(img[y0:y1, x0:x1])
+            label_text = "".join(l + "\n" for l in lines)
             # always save as .jpg so image and label names match
             cv2.imwrite(f"{args.out}/images/{split}/{name}.jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 95])
-            shutil.copy(os.path.join(lab_dir, stem + ".txt"), f"{args.out}/labels/{split}/{name}.txt")
+            with open(f"{args.out}/labels/{split}/{name}.txt", "w") as fh:
+                fh.write(label_text)
             stats[split][0] += 1
             stats[split][3] += not lines
             for l in lines:
@@ -175,15 +253,16 @@ def main():
                     aug, ops = augment(img, rng)
                     cv2.imwrite(f"{args.out}/images/train/{name}_aug{k}.jpg", aug,
                                 [cv2.IMWRITE_JPEG_QUALITY, 95])
-                    shutil.copy(os.path.join(lab_dir, stem + ".txt"),
-                                f"{args.out}/labels/train/{name}_aug{k}.txt")
+                    with open(f"{args.out}/labels/train/{name}_aug{k}.txt", "w") as fh:
+                        fh.write(label_text)
                     stats["train"][1] += 1
                     for l in lines:
                         stats["train"][2][int(l.split()[0])] += 1
                     if len(preview) < 8 and lines and rng.random() < 0.02:
-                        o = cv2.resize(draw_labels(img, lines), (320, 240))
-                        a = cv2.resize(draw_labels(aug, lines), (320, 240))
-                        cv2.putText(a, "+".join(ops)[:40], (5, 232),
+                        pw, ph = 320, int(round(320 * img.shape[0] / img.shape[1]))
+                        o = cv2.resize(draw_labels(img, lines), (pw, ph))
+                        a = cv2.resize(draw_labels(aug, lines), (pw, ph))
+                        cv2.putText(a, "+".join(ops)[:40], (5, ph - 8),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
                         preview.append(np.hstack([o, a]))
 
@@ -205,6 +284,9 @@ def main():
         o, a, m, e = stats[split]
         print(f"  {split:5s}: {o + a:5d} images ({o} original + {a} augmented, {e} originals with no box)"
               " | masks: " + ", ".join(f"{C.CLASSES[i]} {m[i]}" for i in range(nc)))
+    if not args.full:
+        print(f"  ROI crop: {clipped_away} masks outside the ROI or smaller than {args.min_area:g} px dropped")
+        print(f"  Train with:  train_yolo_seg.py --imgsz {C.NET_W}   (= the {C.NET_W}x{C.NET_H} network input)")
     if stats["val"][0] == 0:
         print("[!] No validation clips found - clip names need 'test' or 'val' in them.")
     print(f"\nWrote {args.out}/data.yaml")
