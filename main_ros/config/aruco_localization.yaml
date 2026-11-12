@@ -1,0 +1,44 @@
+# Configuration for the camera, ArUco, and error experiment.
+# ROS 2 parameter file format: each block is "node: ros__parameters".
+# Used by the launch file (static TF + detector), take_sample, and analyze_aruco_errors.
+
+# Setup measured using a tape measure: camera_link (optical center) relative to base_link
+# (center of the wheel axle). Camera facing straight ahead, with no tilt.
+# !!! YOU CHANGED THE CAMERA MOUNT: these values ​​are from the previous setup.
+# !!! Re-measure x (wheel axle -> lens, in the forward direction), y, z (lens height
+# !!! minus wheel axle height), and pitch; then update the values ​​below and for marker_height.
+camera_mount:
+  ros__parameters:
+    x: 0.103       # m, forward
+    y: 0.0         # m, left
+    z: 0.035       # m, H_camera 0.208 (min) / 0.256 (max) - H_wheel_axle 0.047
+    roll: 0.0      # rad
+    pitch: 0.0     # rad (+ = camera facing down)
+    yaw: 0.0       # rad
+
+aruco_detector:
+  ros__parameters:
+    image_topic: /camera/image_rect
+    camera_info_topic: /camera/camera_info
+    use_rectified: true
+    dictionary: DICT_ARUCO_ORIGINAL   # identified using the used ArUco markers ID 5, 7, 13, 21, 37
+# Side length of the outer BLACK SQUARE, measured with a caliper/ruler in meters. 
+# In the photo, the black square measures ~78% of the paper: if the paper is 11 cm,
+# the black square measures ~8.6 cm. Measure it! A 10% error here = 10% error in distances.
+    per_marker_ids: [5, 7, 13, 21, 37]
+    per_marker_size: [0.087, 0.087, 0.087, 0.087, 0.087]
+    marker_ids: ""                    # "" = all; p. e.g. "21"
+    publish_tf: true
+    min_area_px: 100.0
+
+# Geometry of the test track (step B).
+aruco_experiment:
+  ros__parameters:
+    marker_id: 21         # ArUco used to validate the camera mount (AX = XB needs ONE fixed marker)
+    marker_height: 0.09   # m, default height of the CENTER above the floor (IDs not listed below)
+    # Height of the CENTER of each ArUco above the FLOOR (m). !!! MEASURE each one.
+    per_marker_ids: [5, 7, 13, 21, 37]
+    per_marker_height: [0.045, 0.0485, 0.043, 0.0455, 0.04325]
+    base_link_height: 0.047  # m, height of the wheel axle (base_link) above the ground
+    frames_per_sample: 30 # detections averaged per sample (also give the jitter)
+    ambiguity_threshold: 1.5  # ratio of IPPE error below which the yaw is dubious

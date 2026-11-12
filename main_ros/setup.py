@@ -83,6 +83,11 @@ setup(
             # Navigation: Analysis for EKF odometry prediction error
             'motion_noise_analysis = main_ros.navigation.motion_noise_analysis:main',
 
+            # Navigation: EKF localization node
+            'ekf_localization = main_ros.navigation.ekf_localization_node:main',
+            # Navigation: EKF consistency analysis
+            'ekf_consistency_analysis = main_ros.navigation.ekf_consistency_analysis:main',
+
             # Voice: command recognition (HMM) -> /voice_command
             'voice_program_manager = main_ros.voice.voice_program_manager:main',
 
@@ -96,6 +101,13 @@ setup(
             'calibrate_intrinsics = main_ros.vision.camera.calibration.calibrate_intrinsics:main',
             # Vision: Color calibration
             'color_calibrate = main_ros.vision.camera.calibration.color_calibrate:main',
+
+            # Vision: ArUco marker detection and pose estimation
+            'aruco_detector = main_ros.vision.aruco.aruco_detector_node:main',
+            # Vision: ArUco sample taking
+            'take_aruco_sample = main_ros.vision.aruco.take_aruco_sample:main',
+            # Vision: ArUco error analysis
+            'aruco_error_analysis = main_ros.vision.aruco.aruco_error_analysis:main',
 
             # Vision: YOLO webcam test
             'yolo_webcam_test = main_ros.vision.testing.yolo_webcam_test:main',
