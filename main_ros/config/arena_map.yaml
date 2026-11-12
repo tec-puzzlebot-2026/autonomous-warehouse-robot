@@ -1,0 +1,61 @@
+# Map M = {m1, ..., mnl} of the arena: center of each ArUco marker in the "map" frame (in meters).
+# Measure the position of each center using a tape measure, starting from the origin of the arena. Parallel lists: the i-th
+# ID corresponds to the i-th x and y coordinates.
+ekf_localization:
+  ros__parameters:
+    frame_id: map
+
+    # ---------------------------------------------------------------- landmarks
+    # Heights do NOT go here: the filter uses the horizontal range and bearing to each ArUco
+    # (z is dropped after the camera -> base_link transform). Heights and sizes per ID go in
+    # aruco_localization.yaml (per_marker_*) because the detector and the error test need them.
+    landmark_ids: [5, 7, 13, 21, 37]               # integers
+    # x and y must ALWAYS include a decimal point (1.0, not 1): ROS distinguishes between double and integer.
+    # !!! PLACEHOLDERS: replace ALL of them with tape-measured values of YOUR arena.
+    landmark_x: [0.00, 4.00, 4.00, 2.00, 2.00]
+    landmark_y: [1.50, 0.80, 2.20, 0.00, 3.00]
+    # Template for the 5 ArUcos of the arena: measure each CENTER from the arena origin and
+    # keep the three lists in the same order (do not leave guessed coordinates active):
+    # landmark_ids: [5, 7, 13, 21, 37]
+    # landmark_x:   [ x5,  x7,  x13,  x21,  x37 ]
+    # landmark_y:   [ y5,  y7,  y13,  y21,  y37 ]
+    # Direction each marker FACES (the direction its printed side looks toward, i.e. the
+    # inward wall normal), in the map frame, rad: 0 = faces +x, 1.5708 = +y, 3.1416 = -x,
+    # -1.5708 = -y. Needed only for starting from ONE marker; 999.0 = not measured (that marker
+    # is then used only together with another one). Decimal points required.
+    landmark_yaw: [0.0, 3.1416, 3.1416, 1.5708, -1.5708]
+
+    # ------------------------------------------------------------ start-up mode
+    # fixed: the EKF starts at `initial_pose` (robot placed on a known mark).
+    # auto : the robot can be placed ANYWHERE in the arena; the pose is computed from the
+    #        camera and the map above (needs >= 1 marker visible, 2+ is better).
+    localization_mode: auto
+    # Initial pose of the robot (x, y, θ in radians) and its uncertainty (σx, σy, σθ).
+    initial_pose: [0.0, 0.0, 0.0]       # only used in fixed mode (x, y, theta in rad)
+    initial_sigma: [0.01, 0.01, 0.0175] # With about ±1 cm and ±1° by hand. If placed less carefully: [0.02, 0.02, 0.035]. Only used in fixed mode.
+    # Arena rectangle [xmin, xmax, ymin, ymax] in the map frame (m). Solutions outside it
+    # (+0.3 m) are rejected, which removes most mirror solutions. [0,0,0,0] = no check.
+    arena_bounds: [0.0, 4.0, 0.0, 3.0]
+    # true: rotate in place (publishes /cmd_vel angular.z only) until markers are seen.
+    # false: the robot never moves; it must already see a marker when it is switched on.
+    # Test with false first, then true with the robot on blocks / in an open area.
+    search_rotation: false
+    search_speed: 0.3                        # rad/s (limited to 0.5)
+    search_timeout_s: 60.0                   # FAILED after this time or 1.25 turns
+    cmd_vel_topic: /cmd_vel
+    init_frames: 30                          # detections averaged per marker at start-up
+    init_r_scale: 2.0                        # start-up R multiplier (conservative: 1 pose, no history)
+    init_allow_single: true                  # allow a start from one close, unambiguous marker
+    init_max_sigma: 0.3                      # m: reject start solutions less certain than this
+    settle_s: 0.6                            # s the robot must be still before averaging
+    lost_rejects: 8                          # consecutive rejected corrections -> localize again
+    
+    # ------------------------------------------------------------------ filter
+    apply_bias_correction: true
+    # Error terms added to R_k that the camera test grid cannot contain (ekf_core.inflate_R)
+    landmark_sigma: 0.0              # m: tape-measure error of the ArUco centers (e.g. 0.005)
+    latency_s: 0.0                   # s: image -> filter delay (0.0 = ignore; measure it!)
+    # Fallback R while error_model.yaml does not exist
+    fallback_sigma_rho_c0: 0.01      # m
+    fallback_sigma_rho_c2: 0.02      # m/m², σρ = c0 + c2·d²
+    fallback_sigma_alpha_deg: 1.0
