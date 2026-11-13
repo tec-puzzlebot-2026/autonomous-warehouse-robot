@@ -50,6 +50,11 @@ setup(
             os.path.join('share', package_name, 'config'), 
             glob('config/*.yaml')
         ),
+        # RViz configurations
+        (
+            os.path.join('share', package_name, 'rviz'),
+            glob('main_ros/mapping/rviz/*.rviz')
+        ),
     ],
 
     install_requires=[
@@ -99,6 +104,9 @@ setup(
 
             # Vision: YOLO webcam test
             'yolo_webcam_test = main_ros.vision.testing.yolo_webcam_test:main',
+            
+            #slam
+            'slam_rviz = main_ros.mapping.slam_rviz:main',
         ],
     },
 )
