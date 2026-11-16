@@ -66,7 +66,7 @@ def generate_launch_description():
         DeclareLaunchArgument('calib_dir', default_value=str(DEFAULT_CALIB_DIR)),
         DeclareLaunchArgument('width', default_value='640'),
         DeclareLaunchArgument('height', default_value='480'),
-        DeclareLaunchArgument('flip_method', default_value='2'),
+        DeclareLaunchArgument('flip_method', default_value='0'),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(os.path.join(share, 'launch', 'vision.launch.py')),
             launch_arguments={k: LaunchConfiguration(k) for k in

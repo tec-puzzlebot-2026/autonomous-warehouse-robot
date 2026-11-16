@@ -23,7 +23,7 @@ def generate_launch_description():
                               description='Published width (calibration is tied to it)'),
         DeclareLaunchArgument('height', default_value='480'),
         DeclareLaunchArgument('framerate', default_value='30'),
-        DeclareLaunchArgument('flip_method', default_value='2',
+        DeclareLaunchArgument('flip_method', default_value='0',
                               description='nvvidconv flip-method (2 = rotate 180)'),
         DeclareLaunchArgument('argus_extra', default_value='',
                               description='extra nvarguscamerasrc properties'),

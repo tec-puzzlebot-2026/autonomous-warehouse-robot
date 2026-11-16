@@ -34,7 +34,37 @@ from tf2_ros import TransformBroadcaster
 from main_ros.vision.aruco import aruco_core
 from main_ros.vision.aruco import transforms as tf_
 from main_ros.vision.aruco.transforms import matrix_to_quat
-from main_ros.vision.image_conversions import bgr_to_imgmsg, imgmsg_to_bgr
+
+
+def imgmsg_to_bgr(msg):
+    """sensor_msgs/Image -> BGR uint8 array (no cv_bridge; bgr8, rgb8, bgra8, rgba8, mono8)."""
+    enc = msg.encoding.lower()
+    ch = {'bgr8': 3, 'rgb8': 3, 'bgra8': 4, 'rgba8': 4, 'mono8': 1, '8uc1': 1, '8uc3': 3}.get(enc)
+    if ch is None:
+        raise ValueError('Unsupported image encoding: %s' % msg.encoding)
+    row = np.frombuffer(msg.data, dtype=np.uint8).reshape(msg.height, msg.step)
+    img = row[:, :msg.width * ch].reshape(msg.height, msg.width, ch)
+    if enc == 'rgb8':
+        return cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+    if enc == 'bgra8':
+        return cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+    if enc == 'rgba8':
+        return cv2.cvtColor(img, cv2.COLOR_RGBA2BGR)
+    if ch == 1:
+        return cv2.cvtColor(img[:, :, 0], cv2.COLOR_GRAY2BGR)
+    return np.ascontiguousarray(img)
+
+
+def bgr_to_imgmsg(img, header, Image):
+    """BGR uint8 array -> sensor_msgs/Image (bgr8)."""
+    msg = Image()
+    msg.header = header
+    msg.height, msg.width = int(img.shape[0]), int(img.shape[1])
+    msg.encoding = 'bgr8'
+    msg.is_bigendian = 0
+    msg.step = msg.width * 3
+    msg.data = np.ascontiguousarray(img).tobytes()
+    return msg
 
 
 def _finite(x):
@@ -45,7 +75,7 @@ def _finite(x):
 class ArucoDetectorNode(Node):
 
     def __init__(self):
-        super().__init__('aruco_detector')
+        super().__init__('aruco_detector_node')
         dp = self.declare_parameter
         image_topic = dp('image_topic', '/camera/image_rect').value
         info_topic = dp('camera_info_topic', '/camera/camera_info').value

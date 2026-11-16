@@ -46,7 +46,7 @@ def generate_launch_description():
                                           '0 crop, 1 keep all pixels'),
         DeclareLaunchArgument('width', default_value='640'),
         DeclareLaunchArgument('height', default_value='480'),
-        DeclareLaunchArgument('flip_method', default_value='2'),
+        DeclareLaunchArgument('flip_method', default_value='0'),
     ]
 
     camera = IncludeLaunchDescription(

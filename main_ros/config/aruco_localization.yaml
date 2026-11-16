@@ -9,12 +9,12 @@
 # !!! minus wheel axle height), and pitch; then update the values ​​below and for marker_height.
 camera_mount:
   ros__parameters:
-    x: 0.103       # m, forward
+    x: 0.10005       # m, forward (0.103 (front lens) - 0.0025 (remaining distance to optical center) m )
     y: 0.0         # m, left
-    z: 0.035       # m, H_camera 0.208 (min) / 0.256 (max) - H_wheel_axle 0.047
+    z: 0.178       # m, (H_camera 0.208 (min) / 0.256 (max) @ 0° pitch) - H_wheel_axle 0.047 = 0.161 | (H_camera 0.225 (min) / 0.284 (max) @ 25° pitch) - H_wheel_axle 0.047 = 0.178
     roll: 0.0      # rad
-    pitch: 0.0     # rad (+ = camera facing down)
-    yaw: 0.0       # rad
+    pitch: 0.26     # rad (+ = camera fully facing down) 25° / 5π/36 = 0.4363 / (+ = camera facing half-way down) 12.5° / 5π/72 = 0.218  (14.8° = 0.26 rad)
+    yaw: -0.0124       # rad
 
 aruco_detector:
   ros__parameters:
