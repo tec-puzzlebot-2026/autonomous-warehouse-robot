@@ -12,10 +12,11 @@ Results written by this code:
 import pathlib
 
 from main_ros.vision.camera.calibration.calib_io import (
-    DEFAULT_CAMERA_CALIB_DIR as DEFAULT_CALIB_DIR)
-
+    DEFAULT_CAMERA_CALIB_DIR as DEFAULT_CALIB_DIR,
+)
 from main_ros.navigation.motion_model import MotionModel, dead_reckon, wrap
-    _NAV = True
+
+_NAV = True
 
 def expand(p):
     return pathlib.Path(str(p)).expanduser()

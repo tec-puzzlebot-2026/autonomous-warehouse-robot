@@ -85,7 +85,14 @@ def estimate_pose(corners, size, K, D):
 
     ambiguity = float('nan')
     if hasattr(cv2, 'solvePnPGeneric') and flag != cv2.SOLVEPNP_ITERATIVE:
-        n, rvecs, tvecs, errs = cv2.solvePnPGeneric(obj, img, K, D, flags=flag)
+        # OpenCV 4.2 (Jetson) raises "reprojectionError must be CV_32FC1 or CV_64FC1" if this
+        # output is not pre-allocated as float; the value is not used (we compute our own error).
+        try:
+            n, rvecs, tvecs, errs = cv2.solvePnPGeneric(
+                obj, img, K, D, flags=flag, reprojectionError=np.zeros((2, 1), np.float64))
+        except cv2.error:
+            ok, rv, tv = cv2.solvePnP(obj, img, K, D, flags=flag)   # single solution, no ambiguity
+            n, rvecs, tvecs = (1, [rv], [tv]) if ok else (0, [], [])
         if n < 1:
             return None
         sols = sorted(((_reproj_rms(obj, img, r, t, K, D), r, t)
