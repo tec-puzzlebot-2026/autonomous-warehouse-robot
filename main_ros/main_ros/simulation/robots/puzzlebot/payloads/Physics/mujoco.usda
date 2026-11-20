@@ -1,0 +1,229 @@
+#usda 1.0
+(
+    customLayerData = {
+        string creator = "URDF USD Converter v0.1.3"
+    }
+    defaultPrim = "tn__Puzzlebot_Jetson_Ed_eT"
+    doc = """Generated from Composed Stage of root layer /tmp/tmpk87o9xgv/Puzzlebot_Jetson_Ed..usdc
+
+
+Generated from Composed Stage of root layer /tmp/urdf_import_puzzlebot_nb44nf5m/usdex_puzzlebot/Puzzlebot_Jetson_Ed..usdc
+
+
+Generated from Composed Stage of root layer /tmp/urdf_import_puzzlebot_nb44nf5m/temp_puzzlebot/puzzlebot.usd
+
+
+Generated from Composed Stage of root layer /home/spark-439/data/ray_ws/ros2_ws/src/autonomous-warehouse-robot/main_ros/main_ros/simulation/robots/puzzlebot/payloads/base.usd
+"""
+    kilogramsPerUnit = 1
+    metersPerUnit = 1
+    subLayers = [
+        @./physics.usda@
+    ]
+    upAxis = "Z"
+)
+
+over "tn__Puzzlebot_Jetson_Ed_eT"
+{
+    over "Physics"
+    {
+        def MjcActuator "wheel_right_joint_actuator"
+        {
+            uniform double mjc:forceRange:max = inf
+            uniform double mjc:forceRange:min = -inf
+            custom rel mjc:target
+            prepend rel mjc:target = </tn__Puzzlebot_Jetson_Ed_eT/Physics/wheel_right_joint>
+        }
+
+        def MjcActuator "wheel_left_joint_actuator"
+        {
+            uniform double mjc:forceRange:max = inf
+            uniform double mjc:forceRange:min = -inf
+            custom rel mjc:target
+            prepend rel mjc:target = </tn__Puzzlebot_Jetson_Ed_eT/Physics/wheel_left_joint>
+        }
+
+        over "chassis_joint"
+        {
+        }
+
+        over "wheel_right_joint" (
+            delete apiSchemas = ["PhysicsDriveAPI:angular", "PhysicsJointStateAPI:angular"]
+        )
+        {
+        }
+
+        over "wheel_left_joint" (
+            delete apiSchemas = ["PhysicsDriveAPI:angular", "PhysicsJointStateAPI:angular"]
+        )
+        {
+        }
+
+        over "caster_holder_joint"
+        {
+        }
+
+        over "wheel_caster_joint"
+        {
+        }
+
+        over "jetson_joint"
+        {
+        }
+
+        over "camera_base_joint"
+        {
+        }
+
+        over "camera_joint"
+        {
+        }
+
+        over "camera_optical_joint"
+        {
+        }
+
+        over "tof_joint"
+        {
+        }
+
+        over "lidar_base_joint"
+        {
+        }
+
+        over "lidar_joint"
+        {
+        }
+    }
+
+    over "Geometry"
+    {
+        over "base_footprint"
+        {
+            over "base_link"
+            {
+                over "wheel_right_link"
+                {
+                    over "Puzzlebot_Wheel"
+                    {
+                    }
+
+                    over "cylinder"
+                    {
+                    }
+                }
+
+                over "wheel_left_link"
+                {
+                    over "Puzzlebot_Wheel"
+                    {
+                    }
+
+                    over "cylinder"
+                    {
+                    }
+                }
+
+                over "caster_holder_link"
+                {
+                    over "wheel_caster_link"
+                    {
+                        over "sphere"
+                        {
+                        }
+                    }
+
+                    over "Puzzlebot_Caster_Wheel"
+                    {
+                    }
+
+                    over "box"
+                    {
+                    }
+                }
+
+                over "jetson_link"
+                {
+                    over "NVIDIA_Jetson"
+                    {
+                    }
+
+                    over "box"
+                    {
+                    }
+                }
+
+                over "bracket_base_link"
+                {
+                    over "camera_link"
+                    {
+                        over "camera_link_optical"
+                        {
+                            over "box"
+                            {
+                            }
+                        }
+
+                        over "box"
+                        {
+                        }
+                    }
+
+                    over "tof_link"
+                    {
+                        over "box"
+                        {
+                        }
+                    }
+
+                    over "Laser_Camera_Bracket"
+                    {
+                    }
+
+                    over "box"
+                    {
+                    }
+                }
+
+                over "lidar_base_link"
+                {
+                    over "laser_frame"
+                    {
+                        over "box"
+                        {
+                        }
+
+                        over "box_1"
+                        {
+                        }
+                    }
+
+                    over "RPLidar"
+                    {
+                    }
+
+                    over "box"
+                    {
+                    }
+                }
+
+                over "Puzzlebot_Jetson_Lidar_Edition_Base"
+                {
+                }
+
+                over "box"
+                {
+                }
+            }
+        }
+    }
+
+    over "Materials"
+    {
+    }
+
+    over "VisualMaterials"
+    {
+    }
+}
+

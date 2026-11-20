@@ -1,0 +1,109 @@
+# Team Zero custom SLAM v2 — parameters (tune in Isaac Sim first).
+# Used by the Program Manager (program_manager.yaml, step "slam"), which sets
+# use_sim_time and save_dir on the command line after this file.
+slam:
+  ros__parameters:
+    use_sim_time: true
+
+    scan_topic: /laser_scan
+    odom_topic: /wheel/odom
+    map_frame: map
+    odom_frame: ""          # empty = take it from /wheel/odom header
+    base_frame: ""          # empty = take it from /wheel/odom child_frame_id
+
+    # LiDAR mounting fallback, used only if TF base_link -> laser_frame is missing
+    laser_tf_timeout: 3.0
+    laser_x: 0.0
+    laser_y: 0.0
+    laser_yaw: 0.0
+
+    # Map
+    resolution: 0.05
+    initial_map_size_m: 20.0
+    l_free: -0.4
+    l_occ: 0.85
+    l_min: -5.0
+    l_max: 5.0
+    occupied_threshold: 0.6
+    map_publish_period: 1.0
+    graph_publish_period: 1.0
+    save_dir: /ws/maps
+    save_free_max: 50         # saved PGM: occupancy <= this is free (white)
+    status_period: 1.0        # /slam/status for the Program Manager [s]
+
+    # Scan usage (scans have ~3600 beams)
+    map_beam_step: 4          # use every 4th beam for ray tracing
+    match_beams: 180          # beams per particle for matching
+    map_max_range: 10.0
+    match_max_range: 10.0
+    use_no_return_free_space: true
+    loop_voxel: 0.08          # voxel size of the loop-closure point set [m]
+    loop_max_points: 400
+
+    # Likelihood field
+    sigma_hit: 0.10
+    z_hit: 0.9
+    z_rand: 0.1
+    field_max_dist: 0.5
+    field_half_size_m: 12.0
+
+    # Particle filter
+    num_particles: 200
+    motion_alphas: [0.05, 0.01, 0.05, 0.01]   # rot<-rot, rot<-trans, trans<-trans, trans<-rot
+    likelihood_beta: 0.1
+    resample_ratio: 0.5
+
+    # Update policy
+    update_min_d: 0.05        # m moved before a filter update
+    update_min_a: 0.05        # rad turned before a filter update
+    keyframe_d: 0.15          # m moved before a new keyframe
+    keyframe_a: 0.1745        # rad (10 deg)
+
+    # Front-end map: match against the recent keyframes only (not old passes).
+    # Keep the window >= ~2x the LiDAR range, so walls still in view stay in it.
+    frontend_local_map: true
+    local_map_window: 20.0    # m of travelled path kept in the local map
+    local_map_min_keyframes: 10
+    local_map_max_keyframes: 200
+
+    # Uncertainty of the pose-graph edge between consecutive keyframes, in the
+    # robot frame. Calibrated against ground truth in the offline simulation;
+    # re-calibrate on Isaac Sim data if the front-end behaves differently.
+    seq_sigma_along: 0.004          # along the direction of travel [m]
+    seq_sigma_along_per_m: 0.02     # [m per m travelled]
+    seq_sigma_cross: 0.002          # sideways [m]
+    seq_sigma_cross_per_m: 0.005
+    seq_sigma_theta: 0.001          # heading [rad]
+    seq_sigma_theta_per_rad: 0.01   # [rad per rad turned]
+    seq_sigma_theta_per_m: 0.002    # [rad per m travelled]
+    seq_use_particle_cov: false
+
+    # Loop closure (back-end)
+    loop_closure: true
+    loop_threaded: true               # optimize + rebuild in a background thread
+    loop_min_path: 10.0               # old keyframe must be >= this far back along the path [m]
+    loop_search_radius: 3.0           # (x, y) distance to consider "same place" [m]
+    loop_max_candidates: 2
+    loop_match_window: 1.5            # scan-matching search +/- [m] (max drift it can fix)
+    loop_match_window_angle: 0.2618   # +/- rad (15 deg)
+    loop_match_resolution: 0.05
+    loop_match_sigma: 0.05
+    loop_submap_path: 2.5             # submap = old keyframes within +/- this path [m]
+    loop_submap_max_keyframes: 25
+    loop_min_score: 0.50              # accept a match above this mean score (0..1)
+    loop_min_inliers: 0.60            # and this fraction of points on old walls
+    loop_check_every: 2               # check every N keyframes
+    loop_max_backlog: 40              # keyframes queued while the back-end is busy
+    loop_sigma_xy_min: 0.03           # floor on loop-edge uncertainty [m]
+    loop_sigma_theta_min: 0.0087      # [rad] (0.5 deg)
+    loop_huber_delta: 2.0             # robust kernel threshold (sqrt chi2)
+    loop_outlier_chi2: 16.27          # reject loop edges above this after optimizing
+    loop_trigger_xy: 0.05             # optimize when a closure disagrees by more [m]
+    loop_trigger_theta: 0.0175        # [rad] (1 deg)
+    loop_max_pending: 10              # ...or after this many small closures
+    loop_rebuild_min_correction: 0.02 # skip the map rebuild below this [m]
+
+    # Odometry / TF timing
+    max_odom_gap: 0.15
+    tf_publish_rate: 20.0
+    tf_post_date: 0.1

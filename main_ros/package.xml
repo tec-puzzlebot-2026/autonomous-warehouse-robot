@@ -13,6 +13,7 @@
   <depend>rclpy</depend>
   <depend>sensor_msgs</depend>
   <depend>std_msgs</depend>
+  
 
   <!-- ROS 2 Execution Dependencies -->
   <exec_depend>camera_calibration</exec_depend>
@@ -26,6 +27,9 @@
   <exec_depend>rqt_image_view</exec_depend>
   <exec_depend>std_srvs</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>sensor_msgs_py</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>rosgraph_msgs</exec_depend>
 
   <!-- Python / System Dependencies -->
   <exec_depend>python3-matplotlib</exec_depend>
@@ -33,11 +37,17 @@
   <exec_depend>python3-opencv</exec_depend>
   <exec_depend>python3-yaml</exec_depend>
 
+  <!-- extra frameworks made by raymundo -->
+  <exec_depend>sendero</exec_depend>
+  <exec_depend>frontera</exec_depend>
+
     <!-- Testing Dependencies -->
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
   <test_depend>ament_pep257</test_depend>
   <test_depend>python3-pytest</test_depend>
+
+
 
   <export>
     <build_type>ament_python</build_type>

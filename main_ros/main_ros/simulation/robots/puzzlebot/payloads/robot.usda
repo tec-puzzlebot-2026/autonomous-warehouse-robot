@@ -1,0 +1,202 @@
+#usda 1.0
+(
+    customLayerData = {
+        string creator = "URDF USD Converter v0.1.3"
+    }
+    defaultPrim = "tn__Puzzlebot_Jetson_Ed_eT"
+    doc = """Generated from Composed Stage of root layer /tmp/tmpk87o9xgv/Puzzlebot_Jetson_Ed..usdc
+
+
+Generated from Composed Stage of root layer /tmp/urdf_import_puzzlebot_nb44nf5m/usdex_puzzlebot/Puzzlebot_Jetson_Ed..usdc
+
+
+Generated from Composed Stage of root layer /tmp/urdf_import_puzzlebot_nb44nf5m/temp_puzzlebot/puzzlebot.usd
+"""
+    kilogramsPerUnit = 1
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+
+over "tn__Puzzlebot_Jetson_Ed_eT" (
+    prepend apiSchemas = ["IsaacRobotAPI"]
+)
+{
+    prepend rel isaac:physics:robotJoints = [
+        </tn__Puzzlebot_Jetson_Ed_eT/Physics/chassis_joint>,
+        </tn__Puzzlebot_Jetson_Ed_eT/Physics/wheel_right_joint>,
+        </tn__Puzzlebot_Jetson_Ed_eT/Physics/wheel_left_joint>,
+        </tn__Puzzlebot_Jetson_Ed_eT/Physics/caster_holder_joint>,
+        </tn__Puzzlebot_Jetson_Ed_eT/Physics/jetson_joint>,
+        </tn__Puzzlebot_Jetson_Ed_eT/Physics/camera_base_joint>,
+        </tn__Puzzlebot_Jetson_Ed_eT/Physics/lidar_base_joint>,
+        </tn__Puzzlebot_Jetson_Ed_eT/Physics/wheel_caster_joint>,
+        </tn__Puzzlebot_Jetson_Ed_eT/Physics/camera_joint>,
+        </tn__Puzzlebot_Jetson_Ed_eT/Physics/tof_joint>,
+        </tn__Puzzlebot_Jetson_Ed_eT/Physics/camera_optical_joint>,
+        </tn__Puzzlebot_Jetson_Ed_eT/Physics/lidar_joint>,
+    ]
+    prepend rel isaac:physics:robotLinks = [
+        </tn__Puzzlebot_Jetson_Ed_eT/Geometry/base_footprint/base_link>,
+        </tn__Puzzlebot_Jetson_Ed_eT/Geometry/base_footprint/base_link/wheel_right_link>,
+        </tn__Puzzlebot_Jetson_Ed_eT/Geometry/base_footprint/base_link/wheel_left_link>,
+        </tn__Puzzlebot_Jetson_Ed_eT/Geometry/base_footprint/base_link/caster_holder_link>,
+        </tn__Puzzlebot_Jetson_Ed_eT/Geometry/base_footprint/base_link/caster_holder_link/wheel_caster_link>,
+        </tn__Puzzlebot_Jetson_Ed_eT/Geometry/base_footprint/base_link/jetson_link>,
+        </tn__Puzzlebot_Jetson_Ed_eT/Geometry/base_footprint/base_link/bracket_base_link>,
+        </tn__Puzzlebot_Jetson_Ed_eT/Geometry/base_footprint/base_link/bracket_base_link/camera_link>,
+        </tn__Puzzlebot_Jetson_Ed_eT/Geometry/base_footprint/base_link/bracket_base_link/camera_link/camera_link_optical>,
+        </tn__Puzzlebot_Jetson_Ed_eT/Geometry/base_footprint/base_link/bracket_base_link/tof_link>,
+        </tn__Puzzlebot_Jetson_Ed_eT/Geometry/base_footprint/base_link/lidar_base_link>,
+        </tn__Puzzlebot_Jetson_Ed_eT/Geometry/base_footprint/base_link/lidar_base_link/laser_frame>,
+    ]
+    token isaac:robotType = "Default"
+
+    over "Geometry"
+    {
+        over "base_footprint"
+        {
+            over "base_link" (
+                prepend apiSchemas = ["IsaacLinkAPI"]
+            )
+            {
+                over "wheel_right_link" (
+                    prepend apiSchemas = ["IsaacLinkAPI"]
+                )
+                {
+                }
+
+                over "wheel_left_link" (
+                    prepend apiSchemas = ["IsaacLinkAPI"]
+                )
+                {
+                }
+
+                over "caster_holder_link" (
+                    prepend apiSchemas = ["IsaacLinkAPI"]
+                )
+                {
+                    over "wheel_caster_link" (
+                        prepend apiSchemas = ["IsaacLinkAPI"]
+                    )
+                    {
+                    }
+                }
+
+                over "jetson_link" (
+                    prepend apiSchemas = ["IsaacLinkAPI"]
+                )
+                {
+                }
+
+                over "bracket_base_link" (
+                    prepend apiSchemas = ["IsaacLinkAPI"]
+                )
+                {
+                    over "camera_link" (
+                        prepend apiSchemas = ["IsaacLinkAPI"]
+                    )
+                    {
+                        over "camera_link_optical" (
+                            prepend apiSchemas = ["IsaacLinkAPI"]
+                        )
+                        {
+                        }
+                    }
+
+                    over "tof_link" (
+                        prepend apiSchemas = ["IsaacLinkAPI"]
+                    )
+                    {
+                    }
+                }
+
+                over "lidar_base_link" (
+                    prepend apiSchemas = ["IsaacLinkAPI"]
+                )
+                {
+                    over "laser_frame" (
+                        prepend apiSchemas = ["IsaacLinkAPI"]
+                    )
+                    {
+                    }
+                }
+            }
+        }
+    }
+
+    over "Physics"
+    {
+        over "chassis_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "wheel_right_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "wheel_left_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "caster_holder_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "wheel_caster_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "jetson_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "camera_base_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "camera_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "camera_optical_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "tof_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "lidar_base_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "lidar_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+    }
+}
+

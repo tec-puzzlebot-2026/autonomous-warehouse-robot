@@ -1,0 +1,171 @@
+# =============================================================================
+# program_manager.yaml — what the Program Manager starts, and how it waits
+# =============================================================================
+# Read by main_ros/control/program_manager.py (not a ROS parameter file).
+#
+# Placeholders available in every "cmd":
+#   {use_sim_time}  true in sim mode, false in real mode
+#   {config_dir}    this folder (main_ros/config)
+#   {maps_dir}      where SLAM saves maps (per mode, below)
+#   {log_dir}       this run's log folder
+#   {mode}          sim | real
+#
+# Readiness checks ("ready", all must hold):
+#   message: /topic   a message arrived (data is really flowing)
+#   topic:   /topic   someone publishes it
+#   clock:   /clock   simulation time is advancing (Isaac Sim is playing)
+#   action:  /name    an action server exists
+#   service: /name    a service exists
+#   node:    /name    a node exists
+# =============================================================================
+
+modes:
+  sim:                      # Spark: Isaac Sim + the ROS 2 Jazzy container
+    use_sim_time: true
+    maps_dir: /ws/maps
+    log_root: ""            # "" = main_ros/logs
+  real:                     # Jetson Nano on the robot
+    use_sim_time: false
+    maps_dir: ~/maps
+    log_root: ""            # "" = main_ros/logs
+
+tick_hz: 10.0               # state machine rate
+status_hz: 2.0              # /mission/status rate (what the monitor reads)
+
+topics:
+  command: /mission/command                  # in : S P F M R N X (or words)
+  state: /mission/state                      # out: one word
+  status: /mission/status                    # out: JSON for the monitor
+  events: /mission/events                    # out: one line per event
+  cmd_vel: /cmd_vel                          # out: zero velocity when halting
+  explorer_control: /exploration/control     # Frontera
+  explorer_status: /exploration/status
+  explorer_stats: /exploration/stats
+  map_save_request: /exploration/map_save_request
+  map_save_status: /exploration/map_save_status
+  navigation_control: /navigation/control    # Sendero
+  navigation_status: /navigation/status
+  navigation_stats: /navigation/stats
+  slam_status: /slam/status                  # SLAM v2
+
+services:                   # std_srvs/Trigger of SLAM v2
+  slam_reset: /slam/reset
+  slam_optimize: /slam/optimize
+  slam_save: /slam/save_map
+
+mission:
+  start_ack_timeout_s: 5.0      # Frontera must leave WAITING after START
+  start_retries: 3
+  optimize_settle_min_s: 2.0    # after /slam/optimize, wait at least this...
+  optimize_timeout_s: 20.0      # ...and at most this for the back-end to finish
+  service_timeout_s: 5.0
+  save_timeout_s: 15.0
+  save_map_on_stop: true        # X saves the map before closing everything
+  stop_timeout_s: 15.0
+  exit_on_stop: true            # after X: the Program Manager closes, main.launch.py ends,
+                                # the monitor and the host side close too (false = stay, S restarts)
+
+# Leftovers of a crashed earlier run are killed before a bring-up from
+# scratch (regular expressions on the full command line).
+stale_process_patterns:
+  - 'lib/main_ros/wheel_odometry( |$)'
+  - 'lib/main_ros/slam( |$)'
+  - 'lib/sendero/navigator( |$)'
+  - 'sendero\.launch\.py'
+  - 'lib/frontera/exploration_manager( |$)'
+  - '__node:=foxglove_bridge_mission'
+  - 'robot_description\.launch\.py'
+  - 'lib/robot_state_publisher/robot_state_publisher( |$)'
+
+# =============================================================================
+# Steps, started in this order. Each waits for its readiness checks before
+# the next one starts. "modes" selects sim, real or both.
+#   critical: true   -> if it dies during the mission, the robot is halted
+#   role: slam       -> the map services belong to it
+#   role: explorer   -> restarted by RESET (Frontera's STOP is final)
+#   todo: true       -> not configured yet; bring-up stops here with the hint
+# =============================================================================
+steps:
+
+  # ── simulation: Isaac Sim is started by hand on the Spark ────────────────
+  - name: isaac_sim
+    modes: [sim]
+    ready:
+      - clock: /clock
+      - message: /laser_scan
+      - message: /joint_states
+    timeout_s: 180
+    hint: "Open Isaac Sim, load the warehouse and press Play."
+
+  # ── real robot: drivers (fill these in on the Jetson) ────────────────────
+  - name: micro_ros_agent
+    modes: [real]
+    todo: true
+    cmd: "ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyUSB0"
+    ready:
+      - message: /joint_states
+    timeout_s: 30
+    hint: "Set the Hackerboard serial port, then remove todo."
+
+  - name: lidar_driver
+    modes: [real]
+    todo: true
+    cmd: ""
+    ready:
+      - message: /laser_scan
+    timeout_s: 30
+    hint: "Put the LiDAR driver command here (it must publish /laser_scan in frame laser_frame; its position on the robot is laser_joint in config/puzzlebot.urdf)."
+
+  # ── shared: robot model, odometry, SLAM, navigation, exploration ────────
+  # The URDF (config/puzzlebot.urdf) on /robot_description, for Foxglove, and
+  # base_link -> laser_frame on /tf_static, for SLAM. Real robot: measure the
+  # LiDAR position and set laser_joint in the URDF.
+  - name: robot_description
+    critical: false
+    cmd: "ros2 launch main_ros robot_description.launch.py use_sim_time:={use_sim_time}"
+    ready:
+      - topic: /robot_description
+    timeout_s: 20
+    hint: "Install robot_state_publisher in the image: ros-jazzy-robot-state-publisher (real robot: ros-humble-robot-state-publisher)."
+
+  - name: wheel_odometry
+    cmd: "ros2 run main_ros wheel_odometry --ros-args -p use_sim_time:={use_sim_time}"
+    ready:
+      - message: /wheel/odom
+    timeout_s: 30
+
+  - name: slam
+    role: slam
+    cmd: "ros2 run main_ros slam --ros-args --params-file {config_dir}/slam_params.yaml -p use_sim_time:={use_sim_time} -p save_dir:={maps_dir}"
+    ready:
+      - message: /map
+      - service: /slam/save_map
+    timeout_s: 60
+    hint: "SLAM publishes /map after its first scan: check /laser_scan, /wheel/odom and TF."
+
+  - name: sendero
+    cmd: "ros2 launch sendero sendero.launch.py params_file:={config_dir}/sendero_puzzlebot.yaml use_sim_time:={use_sim_time}"
+    ready:
+      - action: /navigate_to_pose
+      - message: /navigation/status
+    timeout_s: 60
+
+  - name: frontera
+    role: explorer
+    cmd: "ros2 run frontera exploration_manager --ros-args --params-file {config_dir}/frontera_puzzlebot.yaml -p use_sim_time:={use_sim_time}"
+    ready:
+      - message: /exploration/status
+    timeout_s: 60
+
+  # ── visualization: Foxglove bridge next to the robot software ────────────
+  # The host's Foxglove Studio connects to ws://<robot address>:8765, so the
+  # host PC (ROS 2 Humble) never joins the robot's DDS graph for visualization
+  # (Humble <-> Jazzy discovery is not fully compatible). Optional: if
+  # foxglove_bridge is not installed, the mission continues without it.
+  - name: foxglove_bridge
+    critical: false
+    cmd: 'ros2 run foxglove_bridge foxglove_bridge --ros-args -r __node:=foxglove_bridge_mission -p port:=8765 -p address:=0.0.0.0 -p send_buffer_limit:=10000000 -p num_threads:=2 -p use_sim_time:={use_sim_time} -p "best_effort_qos_topic_whitelist:=[''^(/tf|/clock|/laser_scan|/slam/scan|/slam/particles|/slam/pose|/wheel/odom|/joint_states|/navigation/local_costmap|/navigation/markers)$'']"'
+    ready:
+      - node: /foxglove_bridge_mission
+    timeout_s: 20
+    hint: "Install it in the image: ros-jazzy-foxglove-bridge (real robot: ros-humble-foxglove-bridge)."
