@@ -136,6 +136,8 @@ setup(
             'go_to_pose = main_ros.navigation.go_to_pose:main',
 
             'differential_drive = main_ros.utils.scripts.differential_drive:main',
+            
+            'jetson_bringup_script = main_ros.utils.scripts.jetson_bringup_script:main',
 
             # ==========================================
             # VOICE
