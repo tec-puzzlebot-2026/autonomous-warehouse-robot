@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
-"""PuzzleBot host-side SSH, micro-ROS, and teleoperation manager.
+"""PuzzleBot host-side SSH, micro-ROS, camera/EKF, and teleoperation manager.
+
+Starts, in order:
+  1. micro-ROS agent on the Jetson  -> motors (/cmd_vel), encoders
+     (/VelocityEncL/R, /robot_vel) and LiDAR (/Lidar) from the Hackerboard
+  2. camera + EKF launch on the Jetson (ros2 launch main_ros ekf_localization.launch.py)
+  3. velocity relay on the host (differential_drive): /cmd_vel_in -> /cmd_vel
+  4. keyboard teleop on the host, publishing /cmd_vel_in
+Ctrl+C stops everything this script started (including the Jetson processes).
 
 The Hackerboard firmware subscribes to /cmd_vel (geometry_msgs/Twist) and does
-the differential-drive conversion itself. Keyboard teleop publishes /cmd_vel_in;
-the differential_drive relay limits the speed, stops the robot when commands
-stop, and forwards to /cmd_vel. (Older firmware used /VelocitySetL/R.)
+the differential-drive conversion itself. (Older firmware used /VelocitySetL/R.)
 """
 import os
 import shlex
@@ -20,7 +26,8 @@ SSH_OPTIONS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
 
 HOST_ROS_SETUP = "/opt/ros/humble/setup.bash"
 
-HOST_WORKSPACE_SETUP = "~/te3003b_ws/install/setup.bash"
+# expanduser: a quoted "~" is NOT expanded by bash, so resolve it here
+HOST_WORKSPACE_SETUP = os.path.expanduser("~/te3003b_ws/install/setup.bash")
 # HOST_WORKSPACE_SETUP = os.path.expanduser(
 #     "~/autonomous-warehouse-robot/install/setup.bash"
 # )
@@ -35,6 +42,12 @@ JETSON_BAUD_RATE = 115200
 
 BOARD_TOPICS = ("/cmd_vel",)      # topics the Hackerboard must be subscribed to
 
+# Camera + EKF launch on the Jetson (uses JETSON_WORKSPACE_SETUP)
+ENABLE_CAMERA_LAUNCH = True
+CAMERA_LAUNCH_PACKAGE = "main_ros"
+CAMERA_LAUNCH_FILE = "ekf_localization.launch.py"
+CAMERA_LAUNCH_PIDFILE = "/tmp/puzzlebot_camera_launch.pid"   # on the Jetson
+
 MAX_LINEAR = 0.3                  # m/s   (relay speed limits)
 MAX_ANGULAR = 1.5                 # rad/s
 CMD_TIMEOUT = 0.5                 # s without commands -> stop
@@ -43,6 +56,8 @@ running = True
 remote_process = None
 controller_process = None
 teleop_process = None
+camera_process = None
+camera_started_by_us = False
 agent_started_by_us = False
 agent_pid = None
 
@@ -116,6 +131,82 @@ def start_jetson():
             return
         time.sleep(0.5)
     raise RuntimeError("micro-ROS agent was not detected within 15 seconds.")
+
+
+def camera_launch_pattern():
+    # "[e]" keeps pgrep from matching the remote shell that runs pgrep itself
+    return f"ros2 launch {CAMERA_LAUNCH_PACKAGE} [e]{CAMERA_LAUNCH_FILE[1:]}"
+
+
+def get_camera_launch_pids():
+    result = ssh_run(f"pgrep -f {shlex.quote(camera_launch_pattern())} || true")
+    if result.returncode != 0:
+        raise RuntimeError(f"Camera launch lookup failed: {result.stderr.strip()}")
+    return [int(x) for x in result.stdout.split() if x.isdigit()]
+
+
+def start_camera_launch():
+    """Start the camera + EKF launch on the Jetson (or reuse a running one)."""
+    global camera_process, camera_started_by_us
+    existing = get_camera_launch_pids()
+    if existing:
+        log(f"Camera/EKF launch already running on Jetson (PID {existing}). Reusing it.")
+        return
+
+    log(f"Starting camera/EKF on Jetson: ros2 launch {CAMERA_LAUNCH_PACKAGE} "
+        f"{CAMERA_LAUNCH_FILE} ...")
+    # 'echo $$' before exec = the PID of ros2 launch itself (exec keeps the PID)
+    script = (
+        "set -e; "
+        f"source {shlex.quote(JETSON_ROS_SETUP)}; "
+        f"source {shlex.quote(JETSON_WORKSPACE_SETUP)}; "
+        f"echo $$ > {shlex.quote(CAMERA_LAUNCH_PIDFILE)}; "
+        'echo "[JETSON] Starting camera/EKF launch..."; '
+        f"exec ros2 launch {shlex.quote(CAMERA_LAUNCH_PACKAGE)} "
+        f"{shlex.quote(CAMERA_LAUNCH_FILE)}"
+    )
+    camera_process = subprocess.Popen(
+        ["ssh", "-tt", *SSH_OPTIONS, JETSON_HOST, "bash -c " + shlex.quote(script)],
+        start_new_session=True
+    )
+    camera_started_by_us = True
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline and running:
+        if camera_process.poll() is not None:
+            raise RuntimeError(
+                f"Camera/EKF launch exited during startup ({camera_process.returncode}). "
+                "Check the launch output above."
+            )
+        if get_camera_launch_pids():
+            log("Camera/EKF launch running on Jetson.")
+            return
+        time.sleep(0.5)
+    raise RuntimeError("Camera/EKF launch was not detected within 20 seconds.")
+
+
+def stop_camera_launch():
+    """Stop the Jetson launch we started: SIGINT (clean shutdown of all its nodes),
+    then SIGTERM if it is still alive after 10 s."""
+    global camera_started_by_us
+    if not camera_started_by_us:
+        return
+    log("Stopping camera/EKF launch on Jetson...")
+    pidfile = shlex.quote(CAMERA_LAUNCH_PIDFILE)
+    script = (
+        f"p=$(cat {pidfile} 2>/dev/null) || exit 0; "
+        f'grep -q {shlex.quote(CAMERA_LAUNCH_FILE)} /proc/$p/cmdline 2>/dev/null || exit 0; '
+        "kill -INT $p; "
+        "for i in $(seq 20); do kill -0 $p 2>/dev/null || break; sleep 0.5; done; "
+        "kill -TERM $p 2>/dev/null; "
+        f"rm -f {pidfile}; true"
+    )
+    try:
+        result = ssh_run(script, timeout=20)
+        if result.returncode != 0:
+            log(f"Camera launch stop warning: {result.stderr.strip()}")
+    except Exception as exc:
+        log(f"Camera launch stop warning: {exc}")
+    camera_started_by_us = False
 
 
 def host_ros_env():
@@ -262,6 +353,8 @@ def cleanup():
     log("Shutting down...")
     stop_process(teleop_process, "keyboard teleoperation")
     stop_process(controller_process, "velocity relay")
+    stop_camera_launch()
+    stop_process(camera_process, "Jetson camera/EKF SSH session")
     stop_remote_agent()
     stop_process(remote_process, "Jetson SSH session")
     log("Shutdown complete.")
@@ -280,12 +373,16 @@ def main():
         check_ssh()
         start_jetson()
         check_hackerboard()
+        if ENABLE_CAMERA_LAUNCH:
+            start_camera_launch()
         start_controller()
         start_teleop()
         log("Teleoperation running. Press Ctrl+C to stop.")
         while running:
             if remote_process is not None and remote_process.poll() is not None:
                 raise RuntimeError("Remote micro-ROS SSH session exited.")
+            if camera_process is not None and camera_process.poll() is not None:
+                raise RuntimeError("Camera/EKF launch on the Jetson exited.")
             if controller_process is not None and controller_process.poll() is not None:
                 raise RuntimeError("Velocity relay exited.")
             if teleop_process is not None and teleop_process.poll() is not None:
