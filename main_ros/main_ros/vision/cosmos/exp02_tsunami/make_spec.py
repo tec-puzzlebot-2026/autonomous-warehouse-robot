@@ -1,0 +1,100 @@
+import json
+
+TEAM  = "/home/ubuntu/data/cosmostests/sem9_team"
+FRAME = f"{TEAM}/inputs/bag_logo_1_start16/frames/frame_000060.png"   # <- the frame you showed me
+SPEC  = f"{TEAM}/experiments/exp02_tsunami/exp02_tsunami.json"
+
+SCENE = (
+    "A scale-model warehouse loading dock seen from the very low, ground-level wide-angle camera of a small "
+    "mobile robot, with slight fisheye distortion and a soft pink-magenta color cast over the whole image. "
+    "The floor is smooth grey concrete-textured board stretching toward the back wall. On the left is a tall "
+    "light-grey wall with a white rectangular panel near the top and a large square black-and-white fiducial "
+    "marker poster near the floor in the lower-left corner. The back wall is light grey with a darker grey lower "
+    "band and contains two open industrial roll-up dock doors labeled 'D4' (center) and 'D3' (right) in large "
+    "dark letters. Between and beside the doors hang square company logo signs: an orange-and-blue swirl 'S' logo "
+    "left of D4, a blue sign with a white-and-red 'e' logo between D4 and D3, and a partially visible logo at the "
+    "right edge. Small control boxes and yellow-black safety bollards stand beside each door. Inside the D4 "
+    "opening is a bright white room with a pallet stacked with colorful product boxes; dark grey rubber mats lie "
+    "on the floor in front of both doors. Above is a white ceiling with a row of small strip lights, a small "
+    "square marker at the top center and a tan object at the top right."
+)
+
+prompt = {
+  "subjects": [
+    {"description": "A violent tsunami surge of flood water bursting into the loading dock",
+     "appearance_details": "Dark grey-green muddy water with thick white foam, spray, bubbles and floating debris, reflecting the indoor lights.",
+     "relationship": "Primary dynamic element that floods and overwhelms the whole loading dock.",
+     "location": "Bursts in through the open D4 and D3 dock doors at the back of the scene and rushes toward the camera.",
+     "relative_size": "Starts as water pouring through the doorways and grows until it fills most of the frame.",
+     "orientation": "Flowing from the back wall toward the camera.",
+     "pose": "Gushing torrent that builds into a breaking wave.",
+     "action": "Water explodes through the open dock doors, spreads across the grey floor, rises quickly and a large breaking wave crashes toward the camera.",
+     "state_changes": "Dry concrete floor becomes covered by rushing water; the scene ends with the camera view engulfed in churning foamy water.",
+     "clothing": "", "expression": "", "gender": "", "age": "", "skin_tone_and_texture": "",
+     "facial_features": "", "number_of_subjects": 1, "number_of_arms": 0, "number_of_legs": 0},
+    {"description": "Pallet of colorful product boxes inside dock door D4",
+     "appearance_details": "Stack of small colorful cardboard product boxes on a pallet in the bright white room behind the D4 door.",
+     "relationship": "Cargo hit first by the water.",
+     "location": "Inside the open D4 doorway at the center of the back wall.",
+     "relative_size": "Small, in the background.",
+     "orientation": "Facing the camera.", "pose": "Initially stacked and static.",
+     "action": "The surge pushes the pallet out through the doorway; boxes tumble off and float toward the camera.",
+     "state_changes": "From a neat static stack to scattered, soaked boxes floating in the flood.",
+     "clothing": "", "expression": "", "gender": "", "age": "", "skin_tone_and_texture": "",
+     "facial_features": "", "number_of_subjects": 1, "number_of_arms": 0, "number_of_legs": 0},
+    {"description": "Loading dock walls, roll-up doors, logo signs and floor mats",
+     "appearance_details": "Light-grey walls, open roll-up doors labeled D4 and D3, square company logo signs, safety bollards, rubber mats and a black-and-white fiducial marker poster on the left wall.",
+     "relationship": "Static environment struck by the water.",
+     "location": "As in the starting frame.",
+     "relative_size": "Large structural elements filling the frame.",
+     "orientation": "As in the starting frame.", "pose": "Static.",
+     "action": "The walls stay in place while water splashes against them; the rubber mats are lifted and carried away and spray soaks the logo signs.",
+     "state_changes": "Dry and clean surfaces become wet, splashed and partly submerged.",
+     "clothing": "", "expression": "", "gender": "", "age": "", "skin_tone_and_texture": "",
+     "facial_features": "", "number_of_subjects": 1, "number_of_arms": 0, "number_of_legs": 0}],
+  "background_setting": SCENE + " The scene matches the initial seed frame exactly before the water arrives.",
+  "lighting": {"conditions": "Even indoor lighting from the ceiling strip lights, matching the seed frame, with the same pink-magenta color cast.",
+               "direction": "Overhead lighting, with bright light coming from the white rooms behind the open dock doors.",
+               "shadows": "Soft, diffuse shadows that become broken and moving once the water arrives.",
+               "illumination_effect": "Strong specular reflections and glare on the moving water surface and wet walls."},
+  "aesthetics": {"composition": "Fixed low first-person robot viewpoint looking toward the two dock doors, locked in place.",
+                 "color_scheme": "Light grey walls and floor with a pink-magenta tint, blue and orange logo signs, overtaken by grey-green water and white foam.",
+                 "mood_atmosphere": "Sudden, chaotic and violent flood disaster.",
+                 "patterns": "Foam streaks, ripples, swirling currents and floating boxes on the water surface."},
+  "cinematography": {"camera_motion": "Completely static camera with zero movement, zero panning and zero zooming. The perspective stays fixed on the seed image.",
+                     "framing": "Fixed wide point-of-view shot from the robot camera facing the dock doors.",
+                     "camera_angle": "Very low, ground-level, straight ahead.",
+                     "depth_of_field": "Deep",
+                     "focus": "Sharp focus from the foreground floor to the back wall.",
+                     "lens_focal_length": "Wide-angle lens with slight fisheye distortion matching the original camera."},
+  "style_medium": "Live-action video",
+  "artistic_style": "Photorealistic with realistic water physics: splashes, foam, turbulence and floating debris.",
+  "context": "Simulation of a tsunami flooding a scale-model warehouse loading dock used to test a small autonomous robot.",
+  "actions": [
+    {"time": "0:00-0:01", "description": "The loading dock is calm and exactly as in the starting frame."},
+    {"time": "0:01-0:03", "description": "Water bursts through the open D4 and D3 dock doors, pushes the pallet of boxes out and floods quickly across the grey floor toward the camera."},
+    {"time": "0:03-0:05", "description": "The water rises and a large breaking wave crashes toward the camera, lifting the mats, scattering floating boxes and splashing the walls and logo signs until the view is engulfed in turbulent foamy water."}],
+  "text_and_signage_elements": [
+    {"text": "D4", "location": "Above the center dock door"},
+    {"text": "D3", "location": "Above the right dock door"}],
+  "segments": [{"segment_index": 0, "time_range": "0:00-0:05",
+                "description": "A calm scale-model loading dock is flooded by a tsunami that bursts through the dock doors and sweeps everything toward the robot camera.",
+                "key_changes": "Dry static dock -> water bursting through doors -> flooding floor -> breaking wave engulfs the view.",
+                "camera": "100% stationary, no zoom."}],
+  "transitions": [],
+  "temporal_caption": ("From 0:00 to 0:01 the scale-model loading dock with open doors D4 and D3 is calm and unchanged. "
+                       "From 0:01 to 0:03 flood water bursts through both open dock doors, shoves the pallet of colorful "
+                       "boxes out of D4 and rushes across the grey floor toward the camera. From 0:03 to 0:05 the water "
+                       "rises into a breaking wave that crashes toward the low robot camera, lifting the floor mats, "
+                       "scattering floating boxes and splashing the walls and logo signs, while the camera stays completely still."),
+  "audio_description": "",
+  "resolution": {"W": 640, "H": 480}, "aspect_ratio": "4,3", "duration": "5.0s", "fps": 24,
+  "shift": 10.0, "guidance": 6.0, "seed": 1010, "num_frames": 120, "num_conditional_frames": 1}
+
+spec = {"name": "exp02_tsunami", "model_mode": "image2video", "enable_sound": False,
+        "resolution": "480", "aspect_ratio": "4,3", "num_frames": 120, "fps": 24,
+        "shift": 10.0, "num_steps": 30, "seed": 1010, "guidance": 6.0,
+        "vision_path": FRAME, "prompt": json.dumps(prompt)}
+
+json.dump(spec, open(SPEC, "w"), indent=2)
+print("wrote", SPEC)
