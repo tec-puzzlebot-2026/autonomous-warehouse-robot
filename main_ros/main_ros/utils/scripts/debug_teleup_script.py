@@ -20,9 +20,13 @@ SSH_OPTIONS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
 
 HOST_ROS_SETUP = "/opt/ros/humble/setup.bash"
 
-HOST_WORKSPACE_SETUP = os.path.expanduser(
-    "~/ros2_ws/puzzlebot/autonomous-warehouse-robot/install/setup.bash"
-)
+HOST_WORKSPACE_SETUP = "/ws/install/setup.bash"
+# HOST_WORKSPACE_SETUP = os.path.expanduser(
+#     "~/autonomous-warehouse-robot/install/setup.bash"
+# )
+# HOST_WORKSPACE_SETUP = os.path.expanduser(
+#     "~/ros2_ws/puzzlebot/autonomous-warehouse-robot/install/setup.bash"
+# )
 
 JETSON_ROS_SETUP = "/opt/ros/humble/setup.bash"
 JETSON_WORKSPACE_SETUP = "/home/puzzlebot/ros2_packages_ws/install/setup.bash"

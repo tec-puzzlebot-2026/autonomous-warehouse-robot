@@ -1,0 +1,162 @@
+#usda 1.0
+(
+    customLayerData = {
+        string creator = "URDF USD Converter v0.1.3"
+    }
+    doc = """Generated from Composed Stage of root layer /tmp/tmpk87o9xgv/Puzzlebot_Jetson_Ed..usdc
+
+
+Generated from Composed Stage of root layer /tmp/urdf_import_puzzlebot_nb44nf5m/usdex_puzzlebot/Puzzlebot_Jetson_Ed..usdc
+
+
+Generated from Composed Stage of root layer /tmp/urdf_import_puzzlebot_nb44nf5m/temp_puzzlebot/puzzlebot.usd
+
+
+Generated from Composed Stage of root layer /home/spark-439/data/ray_ws/ros2_ws/src/autonomous-warehouse-robot/main_ros/main_ros/simulation/robots/puzzlebot/payloads/base.usd
+"""
+    kilogramsPerUnit = 1
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+
+def Scope "Instances"
+{
+    def Xform "Puzzlebot_Jetson_Lidar_Edition_Base" (
+        prepend references = @./geometries.usd@</Geometries/Puzzlebot_Jetson_Lidar_Edition_Base>
+    )
+    {
+        over "Puzzlebot_Jetson_Lidar_Edition_Base" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            custom rel material:binding
+            prepend rel material:binding = </Instances/Puzzlebot_Jetson_Lidar_Edition_Base/VisualMaterials/yellow>
+        }
+
+        def Scope "VisualMaterials"
+        {
+            def Material "yellow" (
+                instanceable = true
+                prepend references = @./materials.usda@</Materials/yellow>
+            )
+            {
+            }
+        }
+    }
+
+    def Xform "Puzzlebot_Wheel" (
+        prepend references = @./geometries.usd@</Geometries/Puzzlebot_Wheel>
+    )
+    {
+        over "Puzzlebot_Wheel" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            custom rel material:binding
+            prepend rel material:binding = </Instances/Puzzlebot_Wheel/VisualMaterials/black>
+        }
+
+        def Scope "VisualMaterials"
+        {
+            def Material "black" (
+                instanceable = true
+                prepend references = @./materials.usda@</Materials/black>
+            )
+            {
+            }
+        }
+    }
+
+    def Xform "Puzzlebot_Caster_Wheel" (
+        prepend references = @./geometries.usd@</Geometries/Puzzlebot_Caster_Wheel>
+    )
+    {
+        over "Puzzlebot_Caster_Wheel" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            custom rel material:binding
+            prepend rel material:binding = </Instances/Puzzlebot_Caster_Wheel/VisualMaterials/black>
+        }
+
+        def Scope "VisualMaterials"
+        {
+            def Material "black" (
+                instanceable = true
+                prepend references = @./materials.usda@</Materials/black>
+            )
+            {
+            }
+        }
+    }
+
+    def Xform "NVIDIA_Jetson" (
+        prepend references = @./geometries.usd@</Geometries/NVIDIA_Jetson>
+    )
+    {
+        over "NVIDIA_Jetson" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            custom rel material:binding
+            prepend rel material:binding = </Instances/NVIDIA_Jetson/VisualMaterials/grey>
+        }
+
+        def Scope "VisualMaterials"
+        {
+            def Material "grey" (
+                instanceable = true
+                prepend references = @./materials.usda@</Materials/grey>
+            )
+            {
+            }
+        }
+    }
+
+    def Xform "Laser_Camera_Bracket" (
+        prepend references = @./geometries.usd@</Geometries/Laser_Camera_Bracket>
+    )
+    {
+        over "Laser_Camera_Bracket" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            custom rel material:binding
+            prepend rel material:binding = </Instances/Laser_Camera_Bracket/VisualMaterials/grey>
+        }
+
+        def Scope "VisualMaterials"
+        {
+            def Material "grey" (
+                instanceable = true
+                prepend references = @./materials.usda@</Materials/grey>
+            )
+            {
+            }
+        }
+    }
+
+    def Xform "RPLidar" (
+        prepend references = @./geometries.usd@</Geometries/RPLidar>
+    )
+    {
+        over "RPLidar" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            custom rel material:binding
+            prepend rel material:binding = </Instances/RPLidar/VisualMaterials/grey>
+        }
+
+        def Scope "VisualMaterials"
+        {
+            def Material "grey" (
+                instanceable = true
+                prepend references = @./materials.usda@</Materials/grey>
+            )
+            {
+            }
+        }
+    }
+}
+

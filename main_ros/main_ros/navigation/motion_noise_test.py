@@ -52,19 +52,19 @@ class Runner(Node):
     def on_R(self, msg):
         self.last_R = self.sign_R * float(msg.data)
         self.n_R += 1
-        self.rows_append(self.now(), 'encR', self.last_R, '')
+        self.rows.append((self.now(), 'encR', self.last_R, ''))
 
     def on_L(self, msg):
         self.last_L = self.sign_L * float(msg.data)
         self.n_L += 1
-        self.rows_append(self.now(), 'encL', self.last_L, '')
+        self.rows.append((self.now(), 'encL', self.last_L, ''))
 
     def send(self, v, w):
         msg = Twist()
         msg.linear.x = float(v)
         msg.angular.z = float(w)
         self.pub.publish(msg)
-        self.rows.append(self.now(), 'cmd', float(v), float(w))
+        self.rows.append((self.now(), 'cmd', float(v), float(w)))
 
     def hold(self, v, w, seconds, rate=20.0, stop_fn=None):
         """Publishes (v, w) at 'rate' Hz during 'seconds' or until stop_fn() is True."""
@@ -129,7 +129,7 @@ def build_plan(test, only=None, model=None, max_wheel=None):
                         max_wheel, max_wheel * model.r, 2 * max_wheel * model.r / model.L,
                         dropped, dropped_w))
     seg_time = float(test.get('segment_time', 15.0))
-    max_dist = float(test.get('max_distance'), 1.5)
+    max_dist = float(test.get('max_distance', 1.5))
     repeats = int(test.get('repeats', 1))
     plan = []
     if only in (None, 'straight'):
@@ -227,7 +227,7 @@ def main(argv=None):
                     'and running micro-ROS?' % (cfg['robot'].get('enc_right_topic'),
                                                 cfg['robot'].get('enc_left_topic')))
         if a.mode == 'sweep':
-            run_sweep(node, cfg['test'], a.only, confirm=not a.yes)
+            run_sweep(node, cfg['test'], a.only, confirm=not a.yes, model=model, max_wheel=max_wheel)
             path = node.save(out_dir / ('sweep_%s.csv' % stamp))
             print('\nSaved %s \nAnalyze with: ros2 run main_ros analyze_motion_noise' % path)
             return

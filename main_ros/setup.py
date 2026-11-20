@@ -11,17 +11,32 @@ setup(
     name=package_name,
     version='0.0.0',
 
-    packages=find_packages(include=[package_name, f'{package_name}.*'], exclude=['test']),
+    # Include main_ros and all nested Python packages
+    packages=find_packages(
+        include=[
+            package_name,
+            f'{package_name}.*'
+        ],
+        exclude=['test']
+    ),
 
     data_files=[
+        # ==========================================
+        # ROS 2 PACKAGE REGISTRATION
+        # ==========================================
         (
             'share/ament_index/resource_index/packages',
             ['resource/' + package_name]
         ),
+
         (
             'share/' + package_name,
             ['package.xml']
         ),
+
+        # ==========================================
+        # LAUNCH FILES
+        # ==========================================
 
         # General launch files
         (
@@ -41,16 +56,23 @@ setup(
             glob('main_ros/vision/launch/*.launch.py')
         ),
 
-        # Voice launch files (if you keep voice.launch.py inside voice/launch/)
+        # Voice launch files
         (
             os.path.join('share', package_name, 'voice', 'launch'),
             glob('main_ros/voice/launch/*.launch.py')
         ),
+
+        # ==========================================
+        # CONFIGURATION FILES (parameters and the robot URDF)
+        # ==========================================
         (
-            os.path.join('share', package_name, 'config'), 
-            glob('config/*.yaml')
+            os.path.join('share', package_name, 'config'),
+            glob('config/*.yaml') + glob('config/*.urdf')
         ),
-        # RViz configurations
+
+        # ==========================================
+        # RVIZ CONFIGURATIONS
+        # ==========================================
         (
             os.path.join('share', package_name, 'rviz'),
             glob('main_ros/mapping/rviz/*.rviz')
@@ -77,40 +99,80 @@ setup(
     entry_points={
         'console_scripts': [
 
-            # Utils: Debug teleoperation
-            'debug_teleup_script = main_ros.utils.scripts.debug_teleup_script:main',
+            # ==========================================
+            # SIMULATION: MANUAL SLAM
+            # ==========================================
 
-            # Utils: Differential drive
-            'differential_drive = main_ros.utils.scripts.differential_drive:main',
+            # Starts manual teleop, wheel odometry and SLAM
+            'manual_program_manager = main_ros.simulation.scripts.manual_sim.program_manager:main',
 
-            # Navigation: Motion tests to measure noise for EKF odometry prediction model
+            # Keyboard teleoperation
+            'manual_teleop = main_ros.simulation.scripts.manual_sim.manual_teleop:main',
+
+            # ==========================================
+            # MAPPING: CUSTOM SLAM
+            # ==========================================
+
+            # Our custom LiDAR SLAM algorithm
+            'slam = main_ros.mapping.slam:main',
+
+            # RViz launcher (runs on laptop)
+            'slam_rviz = main_ros.mapping.slam_rviz:main',
+
+            # ==========================================
+            # NAVIGATION: ODOMETRY
+            # ==========================================
+
+            # Custom differential-drive wheel odometry
+            'wheel_odometry = main_ros.navigation.wheel_odometry:main',
+
+            # Motion noise measurement
             'motion_noise_test = main_ros.navigation.motion_noise_test:main',
-            # Navigation: Analysis for EKF odometry prediction error
+
+            # Motion noise analysis
             'analyze_motion_noise = main_ros.navigation.analyze_motion_noise:main',
 
-            # Voice: command recognition (HMM) -> /voice_command
+            # ==========================================
+            # UTILS
+            # ==========================================
+
+            'debug_teleup_script = main_ros.utils.scripts.debug_teleup_script:main',
+
+            'differential_drive = main_ros.utils.scripts.differential_drive:main',
+
+            # ==========================================
+            # VOICE
+            # ==========================================
+
             'voice_program_manager = main_ros.voice.voice_program_manager:main',
 
-            # Vision: Raspberry Pi Camera v2 untouched sensor image and info publishing
+            # ==========================================
+            # VISION: CAMERA
+            # ==========================================
+
             'camera_node = main_ros.vision.camera.camera_node:main',
-            # Vision: Color corrects and rectifies sensor image
+
             'image_processing = main_ros.vision.camera.image_processing_node:main',
-            # Vision: Latest *raw* camera frame as image saving
+
             'image_saver = main_ros.vision.camera.calibration.image_saver:main',
-            # Vision: Intrinsic camera calibration with OpenCV
+
             'calibrate_intrinsics = main_ros.vision.camera.calibration.calibrate_intrinsics:main',
-            # Vision: Color calibration
+
             'color_calibrate = main_ros.vision.camera.calibration.color_calibrate:main',
 
-            # Vision: YOLO webcam test
+            # ==========================================
+            # VISION: TESTING
+            # ==========================================
+
             'yolo_webcam_test = main_ros.vision.testing.yolo_webcam_test:main',
-            
-            # Slam
-            'slam_rviz = main_ros.mapping.slam_rviz:main',
-            
-            # Control
-            'host_manager = main_ros.control.host_manager:main',
+
+            # ==========================================
+            # CONTROL: PROGRAM MANAGER (robot side) AND HOST SIDE
+            # ==========================================
+
+            'program_manager = main_ros.control.program_manager:main',
             'mission_monitor = main_ros.control.mission_monitor:main',
+            'host_manager = main_ros.control.host_manager:main',
         ],
     },
 )

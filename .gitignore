@@ -325,3 +325,7 @@ install/
 log/
 # Program Manager / host manager run logs
 **/main_ros/logs/
+# Isaac Sim digital twin (too big for GitHub, keep it on the Spark)
+**/simulation/worlds/digital_twin/
+# robot wheel meshes are not Python wheels
+!**/simulation/robots/meshes/wheels/
