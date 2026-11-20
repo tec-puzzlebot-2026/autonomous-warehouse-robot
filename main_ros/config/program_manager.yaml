@@ -69,7 +69,7 @@ mission:
 # scratch (regular expressions on the full command line).
 stale_process_patterns:
   - 'lib/main_ros/wheel_odometry( |$)'
-  - 'lib/main_ros/slam( |$)'
+  - 'lib/planisferio/slam( |$)'
   - 'lib/sendero/navigator( |$)'
   - 'sendero\.launch\.py'
   - 'lib/frontera/exploration_manager( |$)'
@@ -136,7 +136,7 @@ steps:
 
   - name: slam
     role: slam
-    cmd: "ros2 run main_ros slam --ros-args --params-file {config_dir}/slam_params.yaml -p use_sim_time:={use_sim_time} -p save_dir:={maps_dir}"
+    cmd: "ros2 run planisferio slam --ros-args --params-file {config_dir}/slam_params.yaml -p use_sim_time:={use_sim_time} -p save_dir:={maps_dir}"
     ready:
       - message: /map
       - service: /slam/save_map

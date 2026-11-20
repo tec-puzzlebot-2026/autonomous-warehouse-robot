@@ -96,11 +96,15 @@ class ProgramManager(Node):
                 [
                     "ros2",
                     "run",
-                    "main_ros",
+                    "planisferio",
                     "slam",
                     "--ros-args",
                     "-p",
-                    "use_sim_time:=true"
+                    "use_sim_time:=true",
+                    "-p",
+                    "scan_topic:=/laser_scan",
+                    "-p",
+                    "odom_topic:=/wheel/odom"
                 ]
             )
 

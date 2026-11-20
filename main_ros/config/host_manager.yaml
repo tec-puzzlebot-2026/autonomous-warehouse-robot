@@ -31,6 +31,6 @@ foxglove:
   close_studio_on_exit: true
 
 rviz:                             # visualization:=rviz (needs DDS to the robot)
-  cmd: ros2 run main_ros slam_rviz
+  cmd: 'rviz2 -d "$(ros2 pkg prefix planisferio)/share/planisferio/rviz/planisferio.rviz" --ros-args -p use_sim_time:=true'
 
 stale_process_patterns: []

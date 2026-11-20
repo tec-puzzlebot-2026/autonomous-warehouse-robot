@@ -129,7 +129,7 @@ class FakePorts:
 STEPS = [
     mc.Step('isaac_sim', '', [{'clock': '/clock'}], 30.0),
     mc.Step('wheel_odometry', 'ros2 run main_ros wheel_odometry', [{'message': '/wheel/odom'}], 10.0),
-    mc.Step('slam', 'ros2 run main_ros slam', [{'message': '/map'}], 10.0, role='slam'),
+    mc.Step('slam', 'ros2 run planisferio slam', [{'message': '/map'}], 10.0, role='slam'),
     mc.Step('sendero', 'ros2 launch sendero sendero.launch.py', [{'action': '/navigate_to_pose'}], 10.0),
     mc.Step('frontera', 'ros2 run frontera exploration_manager',
             [{'message': '/exploration/status'}], 10.0, role='explorer'),

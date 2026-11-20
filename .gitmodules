@@ -1,0 +1,9 @@
+[submodule "frameworks/frontera-ros2"]
+	path = frameworks/frontera-ros2
+	url = https://github.com/raymundo140/frontera-ros2.git
+[submodule "frameworks/sendero-ros2"]
+	path = frameworks/sendero-ros2
+	url = https://github.com/raymundo140/sendero-ros2.git
+[submodule "frameworks/planisferio-ros2"]
+	path = frameworks/planisferio-ros2
+	url = https://github.com/raymundo140/planisferio-ros2.git

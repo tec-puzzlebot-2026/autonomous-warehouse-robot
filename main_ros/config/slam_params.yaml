@@ -1,7 +1,7 @@
-# Team Zero custom SLAM v2 — parameters (tune in Isaac Sim first).
+# Planisferio settings for the PuzzleBot (overrides of planisferio.yaml).
 # Used by the Program Manager (program_manager.yaml, step "slam"), which sets
 # use_sim_time and save_dir on the command line after this file.
-slam:
+/**:
   ros__parameters:
     use_sim_time: true
 
@@ -28,6 +28,7 @@ slam:
     map_publish_period: 1.0
     graph_publish_period: 1.0
     save_dir: /ws/maps
+    map_name_prefix: slam_map     # saved maps keep their old names
     save_free_max: 50         # saved PGM: occupancy <= this is free (white)
     status_period: 1.0        # /slam/status for the Program Manager [s]
 

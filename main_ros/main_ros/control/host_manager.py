@@ -137,7 +137,7 @@ class HostManager:
         self._log('── RViz ' + '─' * 56)
         self._log('WARNING: RViz joins the robot\'s ROS 2 network over DDS. With a '
                   'Humble laptop and a Jazzy robot this can fail (see the header).')
-        cmd = self.cfg.get('rviz', {}).get('cmd', 'ros2 run main_ros slam_rviz')
+        cmd = self.cfg.get('rviz', {}).get('cmd', 'rviz2 -d "$(ros2 pkg prefix planisferio)/share/planisferio/rviz/planisferio.rviz"')
         ok, msg = self.sup.start('rviz', cmd)
         self._log('RViz started' if ok else f'ERROR: RViz not started: {msg}')
 

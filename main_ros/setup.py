@@ -70,13 +70,6 @@ setup(
             glob('config/*.yaml') + glob('config/*.urdf')
         ),
 
-        # ==========================================
-        # RVIZ CONFIGURATIONS
-        # ==========================================
-        (
-            os.path.join('share', package_name, 'rviz'),
-            glob('main_ros/mapping/rviz/*.rviz')
-        ),
     ],
 
     install_requires=[
@@ -108,16 +101,6 @@ setup(
 
             # Keyboard teleoperation
             'manual_teleop = main_ros.simulation.scripts.manual_sim.manual_teleop:main',
-
-            # ==========================================
-            # MAPPING: CUSTOM SLAM
-            # ==========================================
-
-            # Our custom LiDAR SLAM algorithm
-            'slam = main_ros.mapping.slam:main',
-
-            # RViz launcher (runs on laptop)
-            'slam_rviz = main_ros.mapping.slam_rviz:main',
 
             # ==========================================
             # NAVIGATION: ODOMETRY
