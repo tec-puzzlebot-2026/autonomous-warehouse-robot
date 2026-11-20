@@ -3,8 +3,7 @@
 # Used by the launch file (static TF + detector), take_sample, and analyze_aruco_errors.
 
 # Setup measured using a tape measure: camera_link (optical center) relative to base_link
-# (center of the wheel axle). Camera facing straight ahead, with no tilt.
-# !!! YOU CHANGED THE CAMERA MOUNT: these values ​​are from the previous setup.
+# (center of the wheel axle).
 # !!! Re-measure x (wheel axle -> lens, in the forward direction), y, z (lens height
 # !!! minus wheel axle height), and pitch; then update the values ​​below and for marker_height.
 camera_mount:

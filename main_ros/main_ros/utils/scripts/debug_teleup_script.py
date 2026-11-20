@@ -20,7 +20,7 @@ SSH_OPTIONS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
 
 HOST_ROS_SETUP = "/opt/ros/humble/setup.bash"
 
-HOST_WORKSPACE_SETUP = "/ws/install/setup.bash"
+HOST_WORKSPACE_SETUP = "~/te3003b_ws/install/setup.bash"
 # HOST_WORKSPACE_SETUP = os.path.expanduser(
 #     "~/autonomous-warehouse-robot/install/setup.bash"
 # )
@@ -29,7 +29,7 @@ HOST_WORKSPACE_SETUP = "/ws/install/setup.bash"
 # )
 
 JETSON_ROS_SETUP = "/opt/ros/humble/setup.bash"
-JETSON_WORKSPACE_SETUP = "/home/puzzlebot/ros2_packages_ws/install/setup.bash"
+JETSON_WORKSPACE_SETUP = "/home/puzzlebot/te3003b_ws/install/setup.bash"
 JETSON_SERIAL_PORT = "/dev/ttyUSB0"
 JETSON_BAUD_RATE = 115200
 

@@ -167,7 +167,8 @@ class GlobalLocalizer:
 
     def __init__(self, landmarks, psi=None, rel_heights=None, X=None, rb_cov_fn=None,
                  pose_cov_fn=None, valid_fn=None, bias=None, bounds=None, n_frames=30,
-                 r_scale=2.0, allow_single=True, max_sigma=0.3):
+                 r_scale=2.0, allow_single=True, max_sigma=0.3,
+                 allow_ambiguous_single=True, single_sigma_xy=0.30, single_sigma_theta=0.30):
         self.landmarks = dict(landmarks)
         self.psi = dict(psi or {})
         self.rel_heights = dict(rel_heights or {})
@@ -181,6 +182,14 @@ class GlobalLocalizer:
         self.r_scale = float(r_scale)
         self.allow_single = bool(allow_single)
         self.max_sigma = float(max_sigma)
+        # One-marker start: the marker orientation is the noisiest part of the PnP (real errors of
+        # 8-17 deg and 15-30 cm at 1 m). If the pose model refuses it (ambiguous yaw) the start is
+        # still given as a COARSE pose, and a minimum covariance is always added so that the first
+        # metres of driving (range + bearing + odometry) correct it instead of the gate rejecting.
+        self.allow_ambiguous_single = bool(allow_ambiguous_single)
+        self.prefer_second = False      # set by StartupLocalizer when it can rotate to find a 2nd marker
+        self.single_sigma_xy = float(single_sigma_xy)
+        self.single_sigma_theta = float(single_sigma_theta)
         self.reset()
 
     def reset(self):
@@ -214,6 +223,14 @@ class GlobalLocalizer:
             'dist': float(det['distance']), 'view': float(det['view_angle_deg']),
             'amb': float('inf') if amb is None else float(amb)})
         return i
+
+    def bearing(self, det):
+        """Bearing (rad) of the marker in the robot frame, 0 if it cannot be computed."""
+        try:
+            p_base = self.X @ np.append(np.asarray(det['t'], dtype=float), 1.0)
+            return float(wrap(range_bearing_from_base(p_base)[1] - self.bias.get('bearing', 0.0)))
+        except (TypeError, ValueError, KeyError, AttributeError):
+            return 0.0
 
     def frames(self, i=None):
         if i is not None:
@@ -251,8 +268,11 @@ class GlobalLocalizer:
         if not (self.allow_single and i in self.psi and self.pose_cov_fn is not None):
             return None
         P = self.pose_cov_fn(snap['dist'], snap['view'], snap['amb_min'])
-        if P is None:
-            return None
+        coarse = P is None
+        if coarse:
+            if not self.allow_ambiguous_single:
+                return None
+            P = np.zeros((3, 3))
         h = self.rel_heights.get(i, 0.0)
         x, y, yaw = pose_from_marker_pose(snap['T_C_M'], self.X, self.landmarks[i], self.psi[i], h)
         # remove the measured bias (defined in the wall frame W: x toward the wall)
@@ -264,7 +284,10 @@ class GlobalLocalizer:
         yaw = wrap(yaw - self.bias.get('yaw', 0.0))
         yaw = wrap(yaw + (yaw_odo_now - snap['yaw_odo']))      # robot turned in place since then
         cov = em.rotate_to_map(self.r_scale * np.asarray(P, dtype=float), psi_w)
-        return (x, y, yaw), cov
+        cov = np.asarray(cov, dtype=float) + np.diag([self.single_sigma_xy ** 2,
+                                                       self.single_sigma_xy ** 2,
+                                                       self.single_sigma_theta ** 2])
+        return (x, y, yaw), cov, coarse
 
     def solve(self, yaw_odo_now):
         """Pose from the snapshots. Returns a dict with 'status' and, when 'ok', the pose."""
@@ -290,10 +313,15 @@ class GlobalLocalizer:
                 if sp is not None and (best is None or s['dist'] < best[0]):
                     best = (s['dist'], s['id'], sp)
             if best is not None and len(snaps) == 1:
-                pose, cov = best[2]
+                pose, cov, coarse = best[2]
                 if self._inside(pose):
-                    res.update({'status': 'ok', 'pose': tuple(float(v) for v in pose),
-                                'cov': cov, 'source': 'marker_pose %d' % best[1]})
+                    ok = {'status': 'ok', 'pose': tuple(float(v) for v in pose), 'cov': cov,
+                          'source': 'marker_pose %d%s' % (best[1], ' coarse' if coarse else ''),
+                          'n': res['n'], 'cost': res['cost']}
+                    if self.prefer_second:
+                        res['fallback'] = ok        # keep rotating to find a second marker
+                    else:
+                        res.update(ok)
         return res
 
     def _inside(self, pose, margin=0.3):
@@ -316,27 +344,50 @@ class StartupLocalizer:
     SEARCH, COLLECT, TRACK, FAILED = 'SEARCH', 'COLLECT', 'TRACK', 'FAILED'
 
     def __init__(self, gl, rotate=False, search_speed=0.3, search_timeout_s=60.0, settle_s=0.6,
-                 collect_timeout_s=8.0, lost_rejects=8, max_turns=1.25):
+                 collect_timeout_s=8.0, lost_rejects=8, max_turns=1.5,
+                 search_step_deg=25.0, search_pause_s=0.8, search_center_deg=15.0,
+                 search_kick_speed=0.0, search_kick_s=0.3):
         self.gl = gl
         self.rotate = bool(rotate)
-        self.search_speed = min(abs(float(search_speed)), 0.5)
+        self.search_speed = min(abs(float(search_speed)), 1.5)
         self.search_timeout_s = float(search_timeout_s)
         self.settle_s = float(settle_s)
         self.collect_timeout_s = float(collect_timeout_s)
         self.lost_rejects = int(lost_rejects)
         self.max_turns = float(max_turns)
+        # Stop-and-look search: rotate `search_step_deg`, stop `search_pause_s`, repeat. Detecting
+        # while the robot is still avoids motion blur and gives every marker a fair chance.
+        self.step = math.radians(float(search_step_deg))
+        # start COLLECT only when the new marker is near the image centre: at the field-of-view
+        # edge the detection flickers and 30 frames are never collected
+        self.center_rad = math.radians(float(search_center_deg))
+        # Breakaway kick: first `search_kick_s` of every step at `search_kick_speed` (0 = off), then
+        # `search_speed`. Gets the wheels past static friction without turning fast all the time.
+        self.kick_speed = min(abs(float(search_kick_speed)), 1.5)
+        self.kick_s = float(search_kick_s)
+        self._now = 0.0
+        self._step_t0 = 0.0
+        self.pause_s = float(search_pause_s)
+        self._moving, self._resume = True, True
+        self._step_yaw0 = 0.0
+        self._pause_until = 0.0
+        self.turned_rad = 0.0
         self.state = self.FAILED
         self._stop_pending = False
         self.rejects = 0
+        self.fallback = None            # one-marker (coarse) solution kept while searching
+        self.gl.prefer_second = self.rotate
         self.t0 = self.yaw0 = self.t_collect = self.t_still = 0.0
         self.last_result = None
 
     def start(self, now, yaw_odo):
         self.gl.reset()
+        self.fallback = None
         self.state = self.SEARCH
         self.t0, self.yaw0 = now, yaw_odo
         self.rejects = 0
         self.t_still = None
+        self._resume = True
         self._stop_pending = self.rotate
 
     def tracking(self):
@@ -345,12 +396,14 @@ class StartupLocalizer:
     def _to_search(self):
         self.state = self.SEARCH
         self.t_still = None
+        self._resume = True
 
     def on_detections(self, now, dets, yaw_odo, stationary):
         """Feed one /aruco/detections message. Returns a result dict when a solve is attempted."""
         if self.state == self.SEARCH:
             for d in dets:
-                if self.gl.accepts(d) and int(d['id']) not in self.gl.snapshots:
+                if (self.gl.accepts(d) and int(d['id']) not in self.gl.snapshots
+                        and abs(self.gl.bearing(d)) <= self.center_rad):
                     self.state, self.t_collect, self.t_still = self.COLLECT, now, None
                     break
         if self.state != self.COLLECT:
@@ -369,12 +422,16 @@ class StartupLocalizer:
         self.gl.commit_ready(yaw_odo)
         res = self.gl.solve(yaw_odo)
         self.last_result = res
+        if res.get('fallback') is not None:
+            self.fallback = res['fallback']
         if res['status'] == 'ok':
+            self.fallback = None
             self.state = self.TRACK
             self.rejects = 0
             self._stop_pending = self.rotate
         else:
             if res['status'] == 'inconsistent':
+                self.fallback = None
                 self.gl.reset()                 # a wrong snapshot would poison later solves
             self._to_search()
         return res
@@ -383,6 +440,18 @@ class StartupLocalizer:
         """Timeouts. Call at ~10 Hz."""
         if self.state == self.SEARCH:
             turned = abs(yaw_odo - self.yaw0)
+            self.turned_rad = turned
+            self._now = now
+            if self._resume:
+                self._resume, self._moving, self._step_yaw0 = False, True, yaw_odo
+                self._step_t0 = now
+            elif self.rotate and self.step > 0.0:
+                if self._moving:
+                    if abs(yaw_odo - self._step_yaw0) >= self.step:
+                        self._moving, self._pause_until = False, now + self.pause_s
+                elif now >= self._pause_until:
+                    self._moving, self._step_yaw0 = True, yaw_odo
+                    self._step_t0 = now
             if now - self.t0 > self.search_timeout_s or turned > self.max_turns * 2 * math.pi:
                 self.state = self.FAILED
                 self._stop_pending = self.rotate
@@ -390,11 +459,25 @@ class StartupLocalizer:
             self.gl.clear_buffers()
             self._to_search()
 
+    def use_fallback(self):
+        """After FAILED (no second marker found): accept the stored one-marker solution."""
+        if self.state != self.FAILED or self.fallback is None:
+            return None
+        res, self.fallback = self.fallback, None
+        self.state = self.TRACK
+        self.rejects = 0
+        self._stop_pending = self.rotate
+        return res
+
     def command(self):
         """Angular velocity to publish on /cmd_vel, or None (do not publish)."""
         if not self.rotate:
             return None
         if self.state == self.SEARCH:
+            if not (self._moving or self.step <= 0.0):
+                return 0.0
+            if self.kick_speed > self.search_speed and self._now - self._step_t0 < self.kick_s:
+                return self.kick_speed
             return self.search_speed
         if self.state in (self.COLLECT, self.FAILED):
             return 0.0

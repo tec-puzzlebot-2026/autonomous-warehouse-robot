@@ -74,6 +74,8 @@ setup(
 
             # Utils: Debug teleoperation
             'debug_teleup_script = main_ros.utils.scripts.debug_teleup_script:main',
+            # Utils: Debug teleoperation headless
+            'debug_teleup_headless = main_ros.utils.scripts.debug_teleup_headless:main',
 
             # Utils: Differential drive
             'differential_drive = main_ros.utils.scripts.differential_drive:main',
@@ -87,6 +89,9 @@ setup(
             'ekf_localization = main_ros.navigation.ekf_localization_node:main',
             # Navigation: EKF consistency analysis
             'ekf_consistency_analysis = main_ros.navigation.ekf_consistency_analysis:main',
+
+            # Navigation: Go-to-pose controller
+            'go_to_pose = main_ros.navigation.go_to_pose:main',
 
             # Voice: command recognition (HMM) -> /voice_command
             'voice_program_manager = main_ros.voice.voice_program_manager:main',

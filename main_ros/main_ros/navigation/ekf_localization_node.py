@@ -96,6 +96,18 @@ class EkfNode(Node):
         # Extra R terms the test grid does not contain (see ekf_core.inflate_R); 0 = off
         self.landmark_sigma = float(dp('landmark_sigma', 0.0).value)   # m, map survey error
         self.latency_s = float(dp('latency_s', 0.0).value)             # s, image -> filter delay
+        # Corrections are skipped while turning faster than this (stale image vs odometry);
+        # 0 = never skip.
+        self.max_update_omega = float(dp('max_update_omega', 0.3).value)   # rad/s
+        # Minimum time between two corrections from the same marker: at standstill the frames
+        # repeat the same systematic error and would shrink P far below the real error.
+        self.update_period_s = float(dp('update_period_s', 0.5).value)     # s, 0 = every frame
+        self.last_upd = {}
+        # Fixed mode: when "lost", do not go to SEARCH (needs rotation/markers); instead widen P
+        # and keep correcting from the known start-up neighbourhood.
+        self.recover_fixed = bool(dp('recover_fixed', True).value)
+        self.recover_sigma_xy = float(dp('recover_sigma_xy', 0.25).value)       # m
+        self.recover_sigma_theta = float(dp('recover_sigma_theta', 0.15).value)  # rad
         # fallback if there is no error_model.yaml yet
         self.fb_rho = (float(dp('fallback_sigma_rho_c0', 0.01).value),
                        float(dp('fallback_sigma_rho_c2', 0.02).value))
@@ -115,6 +127,14 @@ class EkfNode(Node):
         max_sigma = float(dp('init_max_sigma', 0.3).value)
         settle_s = float(dp('settle_s', 0.6).value)
         lost_rejects = int(dp('lost_rejects', 8).value)
+        step_deg = float(dp('search_step_deg', 25.0).value)
+        pause_s = float(dp('search_pause_s', 0.8).value)
+        max_turns = float(dp('search_max_turns', 1.5).value)
+        center_deg = float(dp('search_center_deg', 15.0).value)
+        collect_timeout = float(dp('collect_timeout_s', 12.0).value)
+        amb_single = bool(dp('init_allow_ambiguous_single', True).value)
+        single_sxy = float(dp('init_single_sigma_xy', 0.30).value)          # m
+        single_sth = float(dp('init_single_sigma_theta', 0.30).value)       # rad
         search_speed = float(dp('search_speed', 0.3).value)
         search_timeout = float(dp('search_timeout_s', 60.0).value)
 
@@ -169,12 +189,19 @@ class EkfNode(Node):
                          if self.err is not None else None),
             valid_fn=((lambda d, v: em.is_valid(self.err, d, v)) if self.err is not None else None),
             bias=bias, bounds=bounds, n_frames=n_frames, r_scale=r_scale,
-            allow_single=allow_single, max_sigma=max_sigma)
+            allow_single=allow_single, max_sigma=max_sigma,
+            allow_ambiguous_single=amb_single, single_sigma_xy=single_sxy,
+            single_sigma_theta=single_sth)
         self.startup = StartupLocalizer(
             self.gl, rotate=rotate, search_speed=search_speed, search_timeout_s=search_timeout,
-            settle_s=settle_s, lost_rejects=lost_rejects if self.mode == 'auto' else 0)
+            settle_s=settle_s, lost_rejects=lost_rejects,
+            collect_timeout_s=collect_timeout, max_turns=max_turns,
+            search_step_deg=step_deg, search_pause_s=pause_s,
+            search_center_deg=center_deg)   # also in fixed mode: recover
         self.rotate = rotate
         self.failed_reported = False
+        self.last_det_t = self.now()
+        self.diag_t = 0.0
         if self.mode == 'fixed':
             self.startup.state = self.startup.TRACK
         else:
@@ -253,6 +280,7 @@ class EkfNode(Node):
             dets = json.loads(msg.data)
         except ValueError:
             return
+        self.last_det_t = self.now()
         if not self.tracking():
             self.on_det_startup(dets)
             return
@@ -266,15 +294,23 @@ class EkfNode(Node):
                 continue
             if self.err is not None and not em.is_valid(self.err, dist, view):
                 continue                      # outside the range where the error was measured
+            v = w = 0.0
+            if self.last_L is not None and self.last_wR is not None:
+                v, w = self.mm.wheels_to_twist(self.last_wR, self.last_L)
+            if self.max_update_omega > 0.0 and abs(w) > self.max_update_omega:
+                continue                      # turning fast: the image is older than the odometry
+            tnow = self.now()
+            if self.update_period_s > 0.0:
+                lt = self.last_upd.get(int(d['id']))
+                if lt is not None and 0.0 <= tnow - lt < self.update_period_s:
+                    continue
+                self.last_upd[int(d['id'])] = tnow
             p_cam = np.array(list(d['t']) + [1.0])
             z = range_bearing_from_base(self.X @ p_cam)
             if self.apply_bias and self.err is not None:
                 z[0] -= self.err['bias'].get('range', 0.0)
                 z[1] = wrap(z[1] - self.err['bias'].get('bearing', 0.0))
             R = self.measurement_R(dist, view)
-            v = w = 0.0
-            if self.last_L is not None and self.last_wR is not None:
-                v, w = self.mm.wheels_to_twist(self.last_wR, self.last_L)
             R = inflate_R(R, z[0], v, w, self.landmark_sigma, self.latency_s)
             try:
                 res = self.ekf.update(z, lm, R)
@@ -290,11 +326,35 @@ class EkfNode(Node):
                                        'localizing again' % self.startup.lost_rejects)
                 self.write('lost', state=self.startup.state)
                 self.failed_reported = False
+                if self.mode == 'fixed' and self.recover_fixed:
+                    sxy, sth = self.recover_sigma_xy, self.recover_sigma_theta
+                    self.ekf.Sigma = np.maximum(self.ekf.Sigma, np.diag([sxy ** 2, sxy ** 2, sth ** 2]))
+                    self.startup.state = self.startup.TRACK
+                    self.startup.on_update(self.now(), self.yaw_odo, True)   # reset reject counter
+                    self.get_logger().warn('Fixed mode: P widened (σ %.2f m, %.0f°), tracking again'
+                                           % (sxy, math.degrees(sth)))
                 return
 
     def on_det_startup(self, dets):
         """No pose yet: feed the global localizer; start the EKF when a solution passes."""
-        res = self.startup.on_detections(self.now(), dets, self.yaw_odo, self.stationary())
+        now = self.now()
+        self.last_det_t = now
+        if now - self.diag_t > 3.0:
+            self.diag_t = now
+            ok = [(int(d['id']), round(math.degrees(self.gl.bearing(d))))
+                  for d in dets if self.gl.accepts(d)]
+            bad = [(d.get('id'), round(float(d.get('distance') or 0), 2),
+                    round(float(d.get('view_angle_deg') or 0)))
+                   for d in dets if not self.gl.accepts(d)]
+            v, w = (self.mm.wheels_to_twist(self.last_wR, self.last_L)
+                    if self.last_L is not None and self.last_wR is not None else (0.0, 0.0))
+            self.get_logger().info(
+                'Start-up %s: still=%s (v %.3f m/s, w %.3f rad/s) turned %.0f deg, frames %d/%d '
+                'valid (id, bearing deg) %s ignored (id, dist, view) %s' % (
+                    self.startup.state, self.stationary(), v, w,
+                    math.degrees(self.startup.turned_rad), self.gl.frames(),
+                    self.gl.n_frames, ok, bad))
+        res = self.startup.on_detections(now, dets, self.yaw_odo, self.stationary())
         if res is None:
             return
         if res['status'] != 'ok':
@@ -302,6 +362,9 @@ class EkfNode(Node):
                 res['status'], res['n'], res['cost'] if res['cost'] == res['cost'] else -1.0,
                 self.startup.state))
             return
+        self.apply_startup(res)
+
+    def apply_startup(self, res):
         pose = np.array(res['pose'], dtype=float)
         P = np.asarray(res['cov'], dtype=float)
         for f in (self.ekf, self.dr):
@@ -325,6 +388,16 @@ class EkfNode(Node):
         """10 Hz: search timeouts and the rotation command (only with search_rotation)."""
         now = self.now()
         self.startup.tick(now, self.yaw_odo)
+        if self.startup.state == self.startup.FAILED:
+            fb = self.startup.use_fallback()
+            if fb is not None:
+                self.get_logger().warn('No second marker found while rotating: starting from '
+                                       'one marker (coarse)')
+                self.apply_startup(fb)
+        if (not self.tracking() and now - self.last_det_t > 5.0 and now - self.diag_t > 5.0):
+            self.diag_t = now
+            self.get_logger().info('Start-up %s: no detections for %.0f s' % (
+                self.startup.state, now - self.last_det_t))
         if self.startup.state == self.startup.FAILED and not self.failed_reported:
             self.failed_reported = True
             self.get_logger().error(
@@ -416,4 +489,3 @@ def main(args=None):
             node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
-

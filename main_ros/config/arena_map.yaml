@@ -35,7 +35,7 @@ ekf_localization:
     # fixed: the EKF starts at `initial_pose` (robot placed on a known mark).
     # auto : the robot can be placed ANYWHERE in the arena; the pose is computed from the
     #        camera and the map above (needs >= 1 marker visible, 2+ is better).
-    localization_mode: fixed   # first test: fixed. Change to auto later.
+    localization_mode: auto   # first test: fixed. Change to auto later.
     # Initial pose of the robot (x, y, θ in radians) and its uncertainty (σx, σy, σθ).
     # 1 m in front of marker 21 on its centre line, facing it (heading -y = -1.5708 rad):
     initial_pose: [0.80, 1.0, -1.5708]  # only used in fixed mode (x, y, theta in rad)
@@ -48,12 +48,17 @@ ekf_localization:
     # false: the robot never moves; it must already see a marker when it is switched on.
     # Test with false first, then true with the robot on blocks / in an open area.
     search_rotation: false
-    search_speed: 0.3                        # rad/s (limited to 0.5)
-    search_timeout_s: 60.0                   # FAILED after this time or 1.25 turns
-    cmd_vel_topic: /cmd_vel
+    search_speed: 0.8                         # rad/s (limited to 1.0)
+    search_timeout_s: 120.0                   # FAILED after this time or 1.5 turns
+    search_step_deg: 25.0     # rotate this much, then stop and look
+    search_pause_s: 0.8
+    search_max_turns: 1.5
+    search_center_deg: 15.0   # collect only when the marker is within this bearing
+    collect_timeout_s: 12.0
+    cmd_vel_topic: /cmd_vel_in
     init_frames: 30                          # detections averaged per marker at start-up
     init_r_scale: 2.0                        # start-up R multiplier (conservative: 1 pose, no history)
-    init_allow_single: true                  # allow a start from one close, unambiguous marker
+    init_allow_single: true                  # A single marker is now accepted as a coarse start (σ about 30 cm and 17°) when the yaw is ambiguous.
     init_max_sigma: 0.3                      # m: reject start solutions less certain than this
     settle_s: 0.6                            # s the robot must be still before averaging
     lost_rejects: 8                          # consecutive rejected corrections -> localize again
@@ -61,8 +66,8 @@ ekf_localization:
     # ------------------------------------------------------------------ filter
     apply_bias_correction: true
     # Error terms added to R_k that the camera test grid cannot contain (ekf_core.inflate_R)
-    landmark_sigma: 0.005              # m: tape-measure error of the ArUco centers (e.g. 0.005)
-    latency_s: 0.0                   # s: image -> filter delay (0.0 = ignore; measure it!)
+    landmark_sigma: 0.02              # m: tape-measure error of the ArUco centers (e.g. 0.005)
+    latency_s: 0.2                   # s: image -> filter delay (0.0 = ignore; measure it!)
     # Fallback R while error_model.yaml does not exist
     fallback_sigma_rho_c0: 0.01      # m
     fallback_sigma_rho_c2: 0.02      # m/m², σρ = c0 + c2·d²
