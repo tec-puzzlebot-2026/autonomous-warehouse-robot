@@ -131,6 +131,10 @@ setup(
 
             'debug_teleup_script = main_ros.utils.scripts.debug_teleup_script:main',
 
+            'debug_teleup_headless = main_ros.utils.scripts.debug_teleup_headless:main',
+
+            'go_to_pose = main_ros.navigation.go_to_pose:main',
+
             'differential_drive = main_ros.utils.scripts.differential_drive:main',
 
             # ==========================================
