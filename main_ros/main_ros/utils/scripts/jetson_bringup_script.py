@@ -27,7 +27,7 @@ import time
 ROS_SETUP = "/opt/ros/humble/setup.bash"
 WORKSPACE_SETUP = "/home/puzzlebot/te3003b_ws/install/setup.bash"   # has main_ros + micro_ros_agent
 
-SERIAL_PORT = "/dev/ttyUSB0"
+SERIAL_PORT = "/dev/ttyUSB2"
 BAUD_RATE = 115200
 BOARD_TOPICS = ("/cmd_vel",)          # topics the Hackerboard must be subscribed to
 
