@@ -323,3 +323,5 @@ __pycache__/
 build/
 install/
 log/
+# Program Manager / host manager run logs
+**/main_ros/logs/

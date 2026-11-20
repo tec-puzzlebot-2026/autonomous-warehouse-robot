@@ -1,0 +1,105 @@
+<?xml version="1.0"?>
+<!--
+  puzzlebot.urdf — Team Zero PuzzleBot, simple shapes (no meshes)
+  Published on /robot_description by robot_state_publisher (step
+  "robot_description" in program_manager.yaml), so Foxglove draws the robot
+  and TF gets base_link -> laser_frame (used by SLAM).
+
+  base_link: on the floor, under the middle of the wheel axle, x forward.
+  Wheel radius 0.05 m and track 0.19 m match wheel_odometry.
+  The LiDAR joint is the one number that matters for the map: measure it on
+  the robot (and match Isaac Sim) before mapping with the real robot.
+  Author: Raymundo Gomez
+-->
+<robot name="puzzlebot">
+
+  <material name="chassis"><color rgba="0.15 0.15 0.18 1.0"/></material>
+  <material name="wheel"><color rgba="0.05 0.05 0.05 1.0"/></material>
+  <material name="lidar"><color rgba="0.10 0.45 0.85 1.0"/></material>
+  <material name="caster"><color rgba="0.6 0.6 0.6 1.0"/></material>
+  <material name="front"><color rgba="0.95 0.55 0.10 1.0"/></material>
+
+  <link name="base_link"/>
+
+  <!-- chassis plate -->
+  <link name="chassis_link">
+    <visual>
+      <origin xyz="-0.03 0 0" rpy="0 0 0"/>
+      <geometry><box size="0.20 0.16 0.04"/></geometry>
+      <material name="chassis"/>
+    </visual>
+  </link>
+  <joint name="chassis_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="chassis_link"/>
+    <origin xyz="0 0 0.06" rpy="0 0 0"/>
+  </joint>
+
+  <!-- orange strip on the front edge, so the heading is obvious -->
+  <link name="front_marker_link">
+    <visual>
+      <geometry><box size="0.01 0.14 0.012"/></geometry>
+      <material name="front"/>
+    </visual>
+  </link>
+  <joint name="front_marker_joint" type="fixed">
+    <parent link="chassis_link"/>
+    <child link="front_marker_link"/>
+    <origin xyz="0.07 0 0.026" rpy="0 0 0"/>
+  </joint>
+
+  <!-- wheels (fixed: Foxglove draws them without needing their joint states) -->
+  <link name="wheel_left_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="1.5708 0 0"/>
+      <geometry><cylinder radius="0.05" length="0.025"/></geometry>
+      <material name="wheel"/>
+    </visual>
+  </link>
+  <joint name="wheel_left_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="wheel_left_link"/>
+    <origin xyz="0 0.095 0.05" rpy="0 0 0"/>
+  </joint>
+
+  <link name="wheel_right_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="1.5708 0 0"/>
+      <geometry><cylinder radius="0.05" length="0.025"/></geometry>
+      <material name="wheel"/>
+    </visual>
+  </link>
+  <joint name="wheel_right_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="wheel_right_link"/>
+    <origin xyz="0 -0.095 0.05" rpy="0 0 0"/>
+  </joint>
+
+  <!-- rear caster -->
+  <link name="caster_link">
+    <visual>
+      <geometry><sphere radius="0.015"/></geometry>
+      <material name="caster"/>
+    </visual>
+  </link>
+  <joint name="caster_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="caster_link"/>
+    <origin xyz="-0.10 0 0.015" rpy="0 0 0"/>
+  </joint>
+
+  <!-- 2D LiDAR: the frame of /laser_scan -->
+  <link name="laser_frame">
+    <visual>
+      <origin xyz="0 0 -0.01" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035" length="0.04"/></geometry>
+      <material name="lidar"/>
+    </visual>
+  </link>
+  <joint name="laser_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="laser_frame"/>
+    <origin xyz="0 0 0.10" rpy="0 0 0"/>
+  </joint>
+
+</robot>

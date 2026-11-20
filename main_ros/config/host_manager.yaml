@@ -1,0 +1,36 @@
+# =============================================================================
+# host_manager.yaml — what the host PC (laptop) opens: host.launch.py
+# =============================================================================
+# The laptop does not join the robot's ROS 2 network (Humble laptop vs Jazzy
+# robot): the monitor runs on the robot side and is shown here through ssh,
+# and Foxglove connects to the bridge started by the robot's Program Manager.
+
+log_root: ""                      # "" = main_ros/logs/host_manager_<mode>_<date>_<time>/
+
+robot:
+  sim:                            # the Spark, ROS 2 Jazzy in Docker
+    ssh: spark-439@100.67.81.84   # ssh destination ("" = ROS runs on this PC)
+    container: ray-puzzlebot-ros2 # running container ("" = no Docker)
+    setup: "source /opt/ros/jazzy/setup.bash && source /ws/install/setup.bash"
+    foxglove: ws://100.67.81.84:8765
+  real:                           # the Jetson on the robot (fill in)
+    ssh: ""                       # e.g. puzzlebot@192.168.1.50
+    container: ""
+    setup: "source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash"
+    foxglove: ""                  # e.g. ws://192.168.1.50:8765
+
+exit_with_monitor: true           # monitor window closed (after X, or Q) -> close everything here
+
+monitor:
+  title: Team Zero Mission Monitor
+  geometry: 84x41                 # columns x rows (the monitor needs 82 x 38, 39 on the robot)
+
+foxglove:
+  open_studio: true               # open Foxglove Studio (desktop) connected to the robot
+  studio_commands: [foxglove-studio, foxglove]
+  close_studio_on_exit: true
+
+rviz:                             # visualization:=rviz (needs DDS to the robot)
+  cmd: ros2 run main_ros slam_rviz
+
+stale_process_patterns: []

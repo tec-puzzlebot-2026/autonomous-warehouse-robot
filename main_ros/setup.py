@@ -105,8 +105,12 @@ setup(
             # Vision: YOLO webcam test
             'yolo_webcam_test = main_ros.vision.testing.yolo_webcam_test:main',
             
-            #slam
+            # Slam
             'slam_rviz = main_ros.mapping.slam_rviz:main',
+            
+            # Control
+            'host_manager = main_ros.control.host_manager:main',
+            'mission_monitor = main_ros.control.mission_monitor:main',
         ],
     },
 )

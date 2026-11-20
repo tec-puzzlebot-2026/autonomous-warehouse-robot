@@ -46,13 +46,13 @@ MIN_SAMPLES = int(0.15 * SR)
 
 # ---- HMM topology ------------------------------------------------------------
 WORD_STATES = 8            # states per word model (left-to-right)
-WORD_MIX = 2               # Gaussians per state
+WORD_MIX = 4               # Gaussians per state
 GARBAGE_STATES = 6         # "filler" model for non-command sounds (ergodic)
 GARBAGE_MIX = 4
 N_ITER = 20                # Baum-Welch iterations
 
 # ---- Training data -----------------------------------------------------------
-MAX_TRAIN_PER_CLASS = 1000 # cap so training stays a few minutes
+MAX_TRAIN_PER_CLASS = 5000 # cap so training stays a few minutes
                            # (your team's clips are ALWAYS kept; Google fills the rest)
 MAX_TEST_PER_CLASS = 300
 TEST_FRACTION = 0.15       # fraction of SPEAKERS held out for testing
@@ -63,7 +63,7 @@ TEST_FRACTION = 0.15       # fraction of SPEAKERS held out for testing
 TEST_SPEAKERS = []
 USE_ALL_FOR_FINAL = True
 DEFAULT_THRESHOLD = -1.0   # used only if there is no unknown test data
-TARGET_FALSE_ACCEPT = 0.05 # rejection threshold lets <=5% of non-words through
+TARGET_FALSE_ACCEPT = 0.10 # rejection threshold lets <=5% of non-words through
 
 # ---- Recording (record.py) ---------------------------------------------------
 RECORD_SECONDS = 1.5

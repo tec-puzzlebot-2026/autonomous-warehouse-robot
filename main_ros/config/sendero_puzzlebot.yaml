@@ -1,0 +1,58 @@
+# =============================================================================
+# sendero_puzzlebot.yaml — Sendero on the Team Zero warehouse robot
+# =============================================================================
+# Only the settings that differ from Sendero's code defaults are listed; see
+# sendero/config/sendero.yaml for what every parameter means.
+# Started by the Program Manager (program_manager.yaml, step "sendero");
+# use_sim_time is set on the command line by the Program Manager.
+#
+# Robot numbers are the agreed defaults until measured on the real robot:
+# radius 0.15 m (the PuzzleBot with the forks is about 0.10 m), 0.2 m/s,
+# 1.0 rad/s, base_link, /cmd_vel.
+# =============================================================================
+
+/**:
+  ros__parameters:
+    global_frame: map
+    odom_frame: odom
+    robot_base_frame: base_link
+    map_topic: /map
+    scan_topics: [/laser_scan]
+    cmd_vel_topic: /cmd_vel
+    motion_model: differential
+
+    # Footprint: a circle; padding keeps 5 cm from walls while planning.
+    robot_radius: 0.15
+    footprint_padding: 0.05
+    inflation_radius: 0.45
+
+    max_vel_x: 0.2
+    min_vel_x: -0.1
+    max_vel_theta: 1.0
+
+    # If TF has no base_link -> laser_frame transform, assume the LiDAR sits at
+    # the base origin (the SLAM uses the same fallback).
+    use_scan_mount_fallback: true
+    scan_mount_fallback: [0.0, 0.0, 0.0]
+
+    # SLAM v2 publishes occupancy probabilities: a cell seen free once is
+    # about 40, an obstacle is >= 65 (Frontera uses the same thresholds).
+    occupied_threshold: 65
+    free_threshold: 50
+
+    obstacle_max_range: 4.0
+
+    profile_names: [exploration, transport, carrying]
+    default_profile: exploration          # Frontera sends behavior_tree = ""
+    profiles:
+      exploration:
+        allow_unknown: true
+        ignore_goal_yaw: true
+      transport:
+        allow_unknown: false
+      carrying:
+        allow_unknown: false
+        max_vel_x: 0.1
+        max_vel_theta: 0.6
+        acc_lim_x: 0.25
+        acc_lim_theta: 0.8

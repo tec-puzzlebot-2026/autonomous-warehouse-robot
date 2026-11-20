@@ -1,0 +1,406 @@
+# =============================================================================
+# frontera_puzzlebot.yaml — Frontera on the Team Zero warehouse robot
+# =============================================================================
+# Frontera's own frontera.yaml with the values of our system. Lines changed
+# from Frontera's defaults are marked  # TEAM ZERO.
+# Started by the Program Manager (program_manager.yaml, step "frontera");
+# use_sim_time is set on the command line by the Program Manager.
+#
+# Our system: custom SLAM v2 (/map, probabilities 0..100), Sendero navigation
+# (/navigate_to_pose, /navigation/global_costmap), wheel odometry
+# (/wheel/odom, odom -> base_link), 2D LiDAR (/laser_scan).
+#
+# What the framework needs from your system:
+#   1. a SLAM node publishing nav_msgs/OccupancyGrid            (map_topic)
+#   2. the robot pose in TF:  <map frame> -> <robot_base_frame>
+#   3. a nav2_msgs/action/NavigateToPose action server          (navigate_action)
+# Optional: a global costmap as OccupancyGrid, a velocity topic for the
+# rotate-first behavior, an odometry topic, a sensor-pointing topic.
+#
+# How to load it:
+#   ros2 run frontera exploration_manager --ros-args --params-file <this file>
+#
+# Section 1 is robot-specific and MUST be reviewed for a new robot.
+# Sections 2-9 are behavior settings with conservative starting values.
+# None of the values below is experimentally optimized; tune them on your
+# platform and freeze them before running experiments.
+#
+# Units: metres, seconds, radians unless the name says otherwise (_deg, _hz).
+# Lists must not be empty.
+#
+# Section 1 holds generic defaults; values marked CALL-M are examples. The code defaults (used when
+# a line is deleted) are generic: /cmd_vel, base_link, no rotation offset.
+# =============================================================================
+
+/**:
+  ros__parameters:
+
+    # =========================================================================
+    # 1. ROBOT / SYSTEM INTERFACES  —  edit these for your robot
+    # =========================================================================
+
+    # Occupancy grid produced by SLAM. A launcher may override this with
+    #   -p map_topic:=/other_map   (placed AFTER --params-file).
+    map_topic: /map
+    # true  -> subscribe TRANSIENT_LOCAL (slam_toolbox, map_server, Cartographer)
+    # false -> subscribe VOLATILE (use if your SLAM publishes a volatile map)
+    map_qos_transient_local: true
+
+    # Global costmap published as nav_msgs/OccupancyGrid (0..100, -1 unknown).
+    # Used only as a VETO for goals on explicit high-cost cells.
+    # "" disables the veto.
+    costmap_topic: /navigation/global_costmap          # TEAM ZERO: Sendero
+
+    # NavigateToPose action server.
+    navigate_action: /navigate_to_pose
+
+    # Velocity command topic used ONLY by the rotate-first behavior
+    # (geometry_msgs/Twist, angular.z). Not used if rotate_first_enabled=false.
+    cmd_vel_topic: /cmd_vel
+
+    # Odometry topic. Optional: only its child_frame_id is used, as an extra
+    # candidate for the robot base frame. "" disables it.
+    odom_topic: /wheel/odom                            # TEAM ZERO
+    use_odom_child_frame: true
+
+    # Odometry frame (the parent of the base in TF, child of the map frame).
+    # Used when the direct map -> base transform is stale: see tf_max_age_s.
+    # "" = take it from the header.frame_id of odom_topic messages.
+    odom_frame: ""
+
+    # Frame of the robot base in TF, plus fallbacks tried in order.
+    robot_base_frame: base_link                        # TEAM ZERO
+    robot_base_frame_fallbacks:
+      - base_link                                      # TEAM ZERO
+      - base_footprint
+
+    # Global (map) frame. "" = use the frame_id of the received map.
+    global_frame: ""
+
+    # Optional std_msgs/Float32 topic that receives the map-frame bearing
+    # [rad] from the robot to the selected frontier (e.g. to aim a sensor).
+    # "" disables it.
+    sensor_look_topic: ""
+
+    # Speed the navigation stack actually drives at [m/s]. Used only to size
+    # the per-goal time budget (section 7).
+    # CALL-M: 0.6 m/s limit x 30 % program-manager speed setting = 0.18.
+    expected_speed_mps: 0.15                           # TEAM ZERO: Sendero max 0.2
+
+    # Planar range sensor model used to estimate how much unknown space a
+    # frontier would reveal (section 5).
+    #   sensor_range_m: range at which the SLAM map is actually updated.
+    #     Keep it <= your SLAM maximum laser range (CALL-M: 6.0 m). A shorter
+    #     value makes the estimate more local and cheaper to compute.
+    #   sensor_fov_deg: horizontal field of view of the scan used by SLAM.
+    #     If below 360, the sensor is assumed to look along the robot->goal
+    #     bearing on arrival (what rotate-first with your offset produces).
+    sensor_range_m: 4.0                                # TEAM ZERO
+    sensor_fov_deg: 360.0
+
+    # Rotate-first: before navigating, turn the robot body so that a chosen
+    # side faces the frontier (useful for side-mounted sensors on an
+    # omnidirectional base).
+    #     0 -> FRONT faces the frontier
+    #   +90 -> RIGHT side faces the frontier
+    #   -90 -> LEFT side faces the frontier
+    # Set rotate_first_enabled: false for robots whose controller already
+    # turns toward the path (differential drive).
+    rotate_first_enabled: false
+    rotation_heading_offset_deg: 0.0
+
+    # The rotation is commanded directly, outside the navigation stack's
+    # collision checking. It is skipped when a known obstacle of the SLAM map
+    # lies within this distance of the robot center. Use the robot's
+    # CIRCUMSCRIBED radius. 0.0 disables the check.
+    # CALL-M footprint is a 0.50 m square -> 0.354 m.
+    rotation_required_clearance_m: 0.36
+
+    # =========================================================================
+    # 2. FRAMEWORK TOPICS  (normally unchanged)
+    # =========================================================================
+    control_topic: /exploration/control        # in : START | PAUSE | STOP | SAVE_MAP | RESET_NAV_FAULT
+    status_topic: /exploration/status          # out: state string, 1 Hz
+    stats_topic: /exploration/stats            # out: flat key=value CSV, 1 Hz
+    goal_topic: /exploration/goal              # out: current target (latched)
+    frontiers_topic: /exploration/frontiers    # out: MarkerArray (latched)
+    events_topic: /exploration/events          # out: one JSON object per decision/outcome
+    map_save_request_topic: /exploration/map_save_request
+    map_save_status_topic: /exploration/map_save_status
+
+    # The framework never writes map files. At the end of exploration it
+    # publishes this topic name on map_save_request_topic so that your
+    # launcher / program manager saves it.
+    map_save_topic: /map
+    request_map_save_on_complete: false                # TEAM ZERO: the Program Manager saves
+
+    # true  -> status_topic reports "COMPLETE" for every normal ending
+    #          (COMPLETE, COMPLETE_PARTIAL, STAGNATED, TIME_LIMIT); the exact
+    #          class is in stats (completion_class) and in the final event.
+    # false -> status_topic reports the exact class.
+    # Errors are always reported as ERROR_*.
+    legacy_complete_status: false
+
+    # =========================================================================
+    # 3. OCCUPANCY GRID INTERPRETATION
+    # =========================================================================
+    # value < 0 -> unknown ; 0..map_free_max_value -> free ;
+    # >= map_occupied_min_value -> occupied ; in between -> uncertain.
+    # slam_toolbox publishes only -1 / 0 / 100, so any thresholds work there.
+    map_free_max_value: 50                             # TEAM ZERO: SLAM v2 probabilities
+    map_occupied_min_value: 65                         # TEAM ZERO
+    # Goals on costmap cells with cost >= this are vetoed (Nav2: 99 inscribed,
+    # 100 lethal). Unknown costmap cells are never vetoed.
+    costmap_reject_cost: 80
+
+    # =========================================================================
+    # 4. FRONTIERS AND GOAL VALIDITY
+    # =========================================================================
+    # Frontier cell = FREE cell with a 4-connected UNKNOWN neighbor.
+    # Connected clusters shorter than this are ignored as map noise.
+    min_frontier_length_m: 0.15
+    # Clusters longer than this are split into several candidates.
+    # 0.0 disables splitting.
+    max_frontier_length_m: 3.0
+    # Goal cells closer than this to the border of the occupancy grid are not
+    # used (a goal on the edge of a growing map is fragile for planners).
+    map_edge_margin_m: 0.10
+
+    # A goal must be an actual free frontier cell at least this far from any
+    # known obstacle. Use about the robot's inscribed radius.
+    goal_clearance_m: 0.25
+    # Frontiers nearer than this (path length) are not selected: the robot is
+    # already there. If one still has gain, it is reported as unexplored.
+    min_goal_distance_m: 0.7
+    # A goal counts as reached within this straight-line distance; navigation
+    # is then canceled and the next frontier is chosen.
+    goal_reached_distance_m: 0.55
+
+    # =========================================================================
+    # 5. PATH DISTANCE, REACHABILITY, INFORMATION GAIN
+    # =========================================================================
+    # One shortest-path wavefront from the robot over known free space gives
+    # the path length to every candidate. false -> straight-line distance.
+    reachability_enabled: true
+    # Obstacle inflation for that wavefront. Keep it slightly BELOW the
+    # robot's inscribed radius so narrow passable gaps stay open, and
+    # <= goal_clearance_m.
+    reachability_inflation_m: 0.20
+    # Cell size of the wavefront grid (coarser = faster).
+    reachability_resolution_m: 0.10
+    # If the robot stands inside an inflated obstacle, the nearest traversable
+    # cell within this distance is used as the start.
+    reachability_start_search_m: 0.60
+
+    # A frontier the wavefront cannot reach is NOT discarded. After it has
+    # been unreachable on unreachable_confirm_maps consecutive maps, and only
+    # when nothing else is selectable, it is sent to the navigation stack once
+    # as a "probe" so the real planner has the last word.
+    #   probe fails unreachable_probe_limit times -> UNREACHABLE (reported)
+    #   probe_unreachable_with_nav: false -> no probe; classified UNREACHABLE
+    #     after the confirmation maps.
+    # A region closed this way reopens if the map later connects it.
+    unreachable_confirm_maps: 2
+    probe_unreachable_with_nav: true
+    unreachable_probe_limit: 1
+    # Path length assumed for a probe = straight-line distance x this factor.
+    unreachable_distance_factor: 2.0
+
+    # Information gain = unknown area [m2] visible from the goal by ray
+    # casting within the sensor model of section 1 (stops at known obstacles;
+    # unknown space is treated as transparent, so it is an upper bound).
+    gain_num_rays: 72            # rays over the field of view
+    gain_ray_step_m: 0.05        # sample spacing along a ray (0 = map resolution)
+    # Candidates expected to reveal less than this are not worth a trip.
+    min_information_gain_m2: 0.10
+
+    # =========================================================================
+    # 6. UTILITY     U = Gn * exp(-lambda * L) * C * R * V
+    # =========================================================================
+    #   Gn  gain / full sensor footprint area, in [0, 1]
+    #   L   path length to the goal [m]
+    #   C   1 + w * cos(angle between recent travel direction and the start of
+    #       the path to the candidate), in [1-w, 1+w]
+    #   R   recent_goal_penalty near recently reached goals, else 1
+    #   V   unproductive_visit_penalty ^ (unproductive visits to the region)
+    #
+    # lambda [1/m]: 1/lambda is the path length at which a frontier's value
+    # falls to 37 %. Larger = prefers nearer frontiers more strongly.
+    travel_cost_lambda: 0.3
+    # w, in [0, 1). 0 disables directional continuity.
+    direction_continuity_weight: 0.45
+    # The travel direction is taken from the robot's real displacement while
+    # navigating (not from its heading). It is updated every time the robot
+    # has moved this far, blended with the previous direction.
+    direction_min_update_distance_m: 0.40
+    direction_memory_keep: 0.65   # share of the old direction kept, [0, 1)
+    # Length of the initial path segment that defines "direction to candidate".
+    direction_lookahead_m: 1.0
+    recent_goal_history_size: 6
+    recent_goal_radius_m: 1.0
+    recent_goal_penalty: 0.35     # (0, 1]; 1 disables
+    unproductive_visit_penalty: 0.5   # (0, 1]; 1 disables
+
+    # =========================================================================
+    # 7. GOAL EXECUTION AND NAVIGATION SUPERVISION
+    # =========================================================================
+    # The selected target is published, then held this long before any motion
+    # (for visualization). 0.0 for unattended / headless runs.
+    goal_preview_s: 0.0
+
+    # Rotate-first controller (see section 1 for the offset).
+    rotation_start_tolerance_rad: 0.20   # no rotation if already this close
+    rotation_done_tolerance_rad: 0.15
+    rotation_kp: 1.0
+    rotation_max_angular_vel: 0.5        # rad/s
+    rotation_min_angular_vel: 0.12       # rad/s
+    # The rotation phase always ends: after rotation_timeout_s in total, after
+    # rotation_stall_timeout_s without rotation_min_progress_rad of progress,
+    # or after rotation_tf_loss_timeout_s without a fresh pose. In all three
+    # cases the rotation is abandoned and the goal is sent to navigation.
+    rotation_timeout_s: 30.0
+    rotation_stall_timeout_s: 6.0
+    rotation_min_progress_rad: 0.05
+    rotation_tf_loss_timeout_s: 2.0
+
+    # Time budget of one navigation goal (ROS / simulation time):
+    #   budget = nav_budget_base_s + nav_budget_factor * path / expected_speed
+    #   clamped to [nav_budget_min_s, nav_budget_max_s].
+    # If it expires while the robot was still making progress, it is extended
+    # by half, at most nav_budget_extensions_max times.
+    nav_budget_base_s: 30.0
+    nav_budget_factor: 3.0
+    nav_budget_min_s: 60.0
+    nav_budget_max_s: 600.0
+    nav_budget_extensions_max: 1
+
+    # Progress supervision: the goal is abandoned if, for progress_timeout_s,
+    # the robot has neither moved progress_min_improvement_m nor reduced the
+    # remaining path length reported by the navigation feedback by that much.
+    # Keep it longer than your navigation stack's own stuck detection plus
+    # its recovery behaviors, so the stack gets to recover first.
+    # A recovery reported by the stack restarts this timer, at most
+    # progress_recovery_graces times per goal.
+    progress_timeout_s: 60.0
+    progress_min_improvement_m: 0.25
+    progress_recovery_graces: 3
+
+    # Frontier re-evaluation while driving: if the gain at the goal drops
+    # below max(min_information_gain_m2, resolved_gain_fraction x gain at
+    # selection) on resolved_confirm_maps CONSECUTIVE maps, the frontier has
+    # already been observed and the goal is canceled early.
+    resolved_confirm_maps: 2
+    resolved_gain_fraction: 0.15
+
+    # Waiting for the navigation stack to answer.
+    #   *_timeout_s       ROS / simulation time
+    #   *_wall_timeout_s  wall time (still works if the simulation is frozen)
+    goal_response_timeout_s: 10.0
+    goal_response_wall_timeout_s: 30.0
+    cancel_timeout_s: 10.0
+    cancel_wall_timeout_s: 60.0
+    cancel_retries: 1
+    # A goal the navigation stack rejects (e.g. it is still activating) or
+    # cannot be sent is NOT counted against the frontier; the next attempt
+    # waits this long.
+    nav_unavailable_backoff_s: 5.0
+    # If a cancel is still unconfirmed after the retries, the framework enters
+    # a FAULT state: status ERROR_NAV_CANCEL_UNCONFIRMED, no new goal is ever
+    # sent, because the robot may still be moving. It leaves FAULT only when
+    # the stack answers, when the action server restarts, or on the control
+    # command RESET_NAV_FAULT. After this many seconds in FAULT the mission
+    # ends as ERROR_NAV_UNRESPONSIVE (map save still requested). 0 = wait
+    # forever.
+    nav_fault_abort_timeout_s: 120.0
+
+    # =========================================================================
+    # 8. MEMORY, RETRIES, COMPLETION
+    # =========================================================================
+    # Outcomes are remembered per REGION: any frontier within this distance of
+    # a stored region shares its history.
+    region_match_radius_m: 0.75
+
+    # Navigation failures: cooldown after the 1st, 2nd, ... failure; the
+    # region is exhausted after exhaust_after_failures failures.
+    failure_cooldowns_s: [30.0, 120.0]
+    exhaust_after_failures: 3
+
+    # Productive vs unproductive visits. After a frontier is reached, the
+    # framework waits for settle_maps new maps (at most settle_timeout_s) and
+    # measures how much new map appeared within productivity_radius_m of the
+    # goal since it was selected.
+    #   >= min_productive_gain_m2 -> PRODUCTIVE: the region's history is cleared
+    #   otherwise                 -> UNPRODUCTIVE: utility penalty (section 6);
+    #                                exhausted after unproductive_exhaust_after
+    #   no new map arrived        -> UNVERIFIED: no penalty
+    # settle_maps: 0 skips the wait (evaluates on the map already received).
+    settle_maps: 1
+    settle_timeout_s: 3.0
+    productivity_radius_m: 1.5
+    min_productive_gain_m2: 0.25
+    unproductive_exhaust_after: 2
+
+    # An exhausted / unreachable region is reconsidered once more if at least
+    # reopen_min_new_area_m2 of new map appears within reopen_radius_m of it.
+    reopen_radius_m: 1.5
+    reopen_min_new_area_m2: 0.5
+    max_reopens_per_region: 1
+
+    # Exploration ends as
+    #   COMPLETE          no explorable frontier on completion_confirm_maps
+    #                     consecutive NEW maps, only low-gain / unsafe remnants
+    #   COMPLETE_PARTIAL  same, but exhausted or unreachable frontiers remain
+    #   STAGNATED         frontiers remain but nothing was selectable and no
+    #                     goal was active for stagnation_timeout_s of running
+    #                     time, AND the map grew less than
+    #                     stagnation_min_growth_m2 over map_progress_window_s
+    #   TIME_LIMIT        max_exploration_time_s of running time (0 = no limit)
+    # A frontier in cooldown always blocks COMPLETE: it will be retried.
+    completion_confirm_maps: 3
+    # While idle with nothing selectable, frontiers are re-evaluated on every
+    # new map and at least this often. It also counts as a confirmation step
+    # for SLAM systems that do not republish an unchanged map. 0 disables.
+    idle_reevaluation_period_s: 5.0
+    stagnation_timeout_s: 180.0
+    stagnation_min_growth_m2: 0.5
+    map_progress_window_s: 60.0
+    max_exploration_time_s: 0.0
+    # Only for the dashboard counter "stable_refreshes" (not a criterion).
+    map_stable_change_threshold_pct: 0.1
+
+    # =========================================================================
+    # 9. TIMING, TF, DIAGNOSTICS
+    # =========================================================================
+    decision_rate_hz: 5.0            # the single selection / supervision gate
+    rotation_control_rate_hz: 20.0
+    status_rate_hz: 1.0
+
+    # A robot pose is used only if its transform is at most this old (ROS
+    # time). Older, missing or badly stamped transforms count as "no pose":
+    # selection is postponed and rotation stops.
+    # If the direct map -> base lookup is stale, map -> odom and odom -> base
+    # are combined instead: then only odom -> base must meet tf_max_age_s.
+    # (SLAM systems such as slam_toolbox may republish map -> odom only when
+    # they process a scan, so its stamp stops advancing while the robot
+    # stands still.) tf_map_odom_max_age_s limits the age of map -> odom;
+    # 0 = no limit.
+    tf_max_age_s: 1.0
+    tf_map_odom_max_age_s: 0.0
+    # Transforms stamped further than this in the future are rejected.
+    tf_future_tolerance_s: 5.0
+    # Accept transforms with a zero stamp (fully static chains).
+    tf_accept_zero_stamp: true
+
+    # ROS time never moves behavior timers backward. A single forward step
+    # larger than this is clamped (clock discontinuity).
+    clock_max_forward_step_s: 10.0
+    # ROS time not advancing for this long (wall) is reported as CLOCK_FROZEN.
+    frozen_clock_wall_timeout_s: 10.0
+
+    # A pose step larger than this in one cycle is a localization correction,
+    # not travel (dashboard distance and travel direction ignore it).
+    pose_jump_reject_m: 1.0
+    # Candidates listed in each FRONTIER_EVALUATION event.
+    event_max_candidates: 10
+    # Log one line per decision and per selected target.
+    log_decisions: true
