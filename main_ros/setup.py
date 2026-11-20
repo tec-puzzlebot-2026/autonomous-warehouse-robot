@@ -126,11 +126,21 @@ setup(
             # Custom differential-drive wheel odometry
             'wheel_odometry = main_ros.navigation.wheel_odometry:main',
 
-            # Motion noise measurement
+            # Motion tests to measure noise for the EKF odometry prediction model
             'motion_noise_test = main_ros.navigation.motion_noise_test:main',
 
-            # Motion noise analysis
-            'analyze_motion_noise = main_ros.navigation.analyze_motion_noise:main',
+            # Analysis of the EKF odometry prediction error
+            'motion_noise_analysis = main_ros.navigation.motion_noise_analysis:main',
+
+            # ==========================================
+            # NAVIGATION: EKF LOCALIZATION
+            # ==========================================
+
+            # EKF localization node
+            'ekf_localization = main_ros.navigation.ekf_localization_node:main',
+
+            # EKF consistency analysis
+            'ekf_consistency_analysis = main_ros.navigation.ekf_consistency_analysis:main',
 
             # ==========================================
             # UTILS
@@ -159,6 +169,19 @@ setup(
             'calibrate_intrinsics = main_ros.vision.camera.calibration.calibrate_intrinsics:main',
 
             'color_calibrate = main_ros.vision.camera.calibration.color_calibrate:main',
+
+            # ==========================================
+            # VISION: ARUCO
+            # ==========================================
+
+            # ArUco marker detection and pose estimation
+            'aruco_detector = main_ros.vision.aruco.aruco_detector_node:main',
+
+            # ArUco sample taking
+            'take_aruco_sample = main_ros.vision.aruco.take_aruco_sample:main',
+
+            # ArUco error analysis
+            'aruco_error_analysis = main_ros.vision.aruco.aruco_error_analysis:main',
 
             # ==========================================
             # VISION: TESTING

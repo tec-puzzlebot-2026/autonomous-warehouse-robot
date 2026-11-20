@@ -17,7 +17,77 @@ import cv2
 import numpy as np
 import yaml
 
-DEFAULT_CAMERA_CALIB_DIR = '~/ros2_ws/src/main_ros/main_ros/vision/camera/calibration'
+_INSTALLED = ('install', 'build', 'site-packages', 'dist-packages')
+
+# Where the calibration folder lives relative to a repo root, a package folder, etc.
+_UPWARD_CANDIDATES = ('', 'calibration', 'camera/calibration', 'vision/camera/calibration',
+                      'main_ros/vision/camera/calibration',
+                      'main_ros/main_ros/vision/camera/calibration')
+# Relative to a colcon workspace root (the folder that has src/ and install/):
+# <ws>/src/<repo>/main_ros/main_ros/vision/camera/calibration
+_WORKSPACE_PATTERNS = ('src/main_ros/main_ros/vision/camera/calibration',
+                       'src/main_ros/vision/camera/calibration',
+                       'src/*/main_ros/main_ros/vision/camera/calibration',
+                       'src/*/main_ros/vision/camera/calibration',
+                       'src/*/vision/camera/calibration')
+
+
+def _is_source_dir(cand):
+    """A folder that holds calib_io.py and is NOT inside install/, build/ or site-packages."""
+    return (cand / 'calib_io.py').is_file() and not any(part in _INSTALLED for part in cand.parts)
+
+
+def _in_workspace(root):
+    """Calibration folder in the source tree of the colcon workspace `root` (it has src/)."""
+    for pattern in _WORKSPACE_PATTERNS:
+        for cand in sorted(root.glob(pattern)):
+            if _is_source_dir(cand):
+                return cand
+    return None
+
+
+def _default_camera_calib_dir():
+    """<repo>/main_ros/main_ros/vision/camera/calibration, with no hard-coded path.
+
+    1) env var MAIN_ROS_CAMERA_CALIB_DIR;
+    2) the folder this file lives in (git clone, Docker, colcon --symlink-install);
+    3) this is an installed copy (install/, build/, site-packages: a rebuild would erase the
+       data), so look for the source tree:
+       a) in the workspace this file was installed from: <ws>/install/... -> <ws>/src/...
+          (works from any current directory);
+       b) from the current directory: upward (the cwd is inside the repo) and, at every level,
+          downward into <level>/src/... (the cwd is the workspace root or one of its parents);
+    4) ~/main_ros_camera_calibration.
+    """
+    env = os.environ.get('MAIN_ROS_CAMERA_CALIB_DIR')
+    if env:
+        return env
+    file_path = pathlib.Path(__file__).resolve()
+    here = file_path.parent                                    # .../vision/camera/calibration
+    if not any(part in _INSTALLED for part in here.parts):
+        return str(here)
+
+    # 3a) workspace root = the folder above the 'install' (or 'build') part of this file's path
+    for i, part in enumerate(file_path.parts):
+        if part in ('install', 'build') and i > 0:
+            found = _in_workspace(pathlib.Path(*file_path.parts[:i]))
+            if found is not None:
+                return str(found)
+
+    # 3b) from the current directory
+    cwd = pathlib.Path.cwd().resolve()
+    for p in [cwd] + list(cwd.parents):
+        for rel in _UPWARD_CANDIDATES:
+            cand = p / rel if rel else p
+            if _is_source_dir(cand):
+                return str(cand)
+        found = _in_workspace(p)
+        if found is not None:
+            return str(found)
+    return '~/main_ros_camera_calibration'
+
+
+DEFAULT_CAMERA_CALIB_DIR = _default_camera_calib_dir()
 CAMERA_INFO_FILE = 'data/camera_info.yaml'
 INTRINSICS_NPZ_FILE = 'data/intrinsicCalibration.npz'
 COLOR_NPZ_FILE = 'data/colorCalibration.npz'

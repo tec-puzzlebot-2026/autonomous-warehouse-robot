@@ -129,8 +129,8 @@ def analyze_segment(data, seg, model, settle_min=1.0, tail=0.3):
     t0, t1, v_cmd, w_cmd = seg
     eR, eL = data['encR'], data['encL']
     wR_cmd, wL_cmd = model.twist_to_wheels(v_cmd, w_cmd)
-    sR = steady_start(eR[:, 0], eR[:, 1], t0, t1, settle_min)
-    sL = steady_start(eL[:, 0], eL[:, 1], t0, t1, settle_min)
+    sR = steady_start(eR[:, 0], eR[:, 1], t0, t1, settle_min, rel_tol=0.10, abs_tol=0.15)
+    sL = steady_start(eL[:, 0], eL[:, 1], t0, t1, settle_min, rel_tol=0.10, abs_tol=0.15)
     ws, we = max(sR, sL), t1 - tail
     res = {'t0': t0, 't1': t1, 'v_cmd': v_cmd, 'w_cmd': w_cmd, 'kind': kind_of(v_cmd, w_cmd),
            'wR_cmd': wR_cmd, 'wL_cmd': wL_cmd, 'win_start': ws, 'win_end': we,

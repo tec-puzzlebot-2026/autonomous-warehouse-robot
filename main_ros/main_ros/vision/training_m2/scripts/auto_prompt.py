@@ -20,6 +20,17 @@ How it works:
      before running SAM 2. Existing clips in prompts.json are only replaced if you
      pass them in --clips.
 
+  6. --roi-only: a track that never has >= 20 % of its box inside config_m2.ROI is
+     dropped. Those boxes are cut away by build_dataset_seg.py anyway, so SAM 2 does not
+     have to track them (fewer objects = faster SAM 2, fewer junk masks to review).
+     Small boxes INSIDE the ROI are deliberately kept: a far box that is in the crop but
+     unlabeled would teach the model "this box is background", which fights the near
+     boxes (scale augmentation shrinks those to the same size). Far boxes are removed
+     at runtime by the size filter in near_box.py, not by leaving them unlabeled.
+
+Use a FULL-FRAME model here (boxes_v1/v2): it runs on whole frames. The ROI model is
+for the robot.
+
 Then:  sam_label_seg.py --clips <the same clips>   ->  review videos as before.
 """
 import argparse
@@ -67,6 +78,8 @@ def main():
     ap.add_argument("--min-len", type=int, default=5, help="drop tracks shorter than this (frames)")
     ap.add_argument("--every", type=int, default=25, help="re-prompt each object every N frames (0 = never)")
     ap.add_argument("--buffer", type=int, default=60, help="frames a lost track is remembered")
+    ap.add_argument("--roi-only", action="store_true", help="drop tracks that never enter config_m2.ROI")
+    ap.add_argument("--device", default="0")
     ap.add_argument("--frames", default=C.FRAMES)
     ap.add_argument("--prompts", default=C.PROMPTS)
     args = ap.parse_args()
@@ -81,7 +94,7 @@ def main():
         tracks = {}                                     # track id -> {frame idx: (cls, conf, box)}
         for fi, f in enumerate(tqdm(files, desc=f"{clip}: tracking", unit="frame", dynamic_ncols=True)):
             r = model.track(cv2.imread(os.path.join(src, f)), persist=True, tracker=tcfg,
-                            conf=args.conf, imgsz=args.imgsz, device=0, verbose=False)[0]
+                            conf=args.conf, imgsz=args.imgsz, device=args.device, verbose=False)[0]
             if r.boxes.id is None:
                 continue
             for tid, c, cf, b in zip(r.boxes.id.int().tolist(), r.boxes.cls.int().tolist(),
@@ -89,13 +102,26 @@ def main():
                 tracks.setdefault(tid, {})[fi] = (c, cf, [int(round(v)) for v in b])
 
         # ---- tracks -> objects ----
-        kept, entries = [], []
-        dropped = {"short / weak": 0, "duplicate": 0}
+        H, W = cv2.imread(os.path.join(src, files[0])).shape[:2] if files else (C.FRAME_H, C.FRAME_W)
+        rx0, ry0 = C.ROI[0] * W / C.FRAME_W, C.ROI[1] * H / C.FRAME_H
+        rx1, ry1 = C.ROI[2] * W / C.FRAME_W, C.ROI[3] * H / C.FRAME_H
+
+        def in_roi(b):
+            """fraction of the box area inside the ROI"""
+            iw = max(0, min(b[2], rx1) - max(b[0], rx0))
+            ih = max(0, min(b[3], ry1) - max(b[1], ry0))
+            return iw * ih / max((b[2] - b[0]) * (b[3] - b[1]), 1)
+
+        kept, kept_cls, entries = [], [], []
+        dropped = {"short / weak": 0, "duplicate": 0, "outside ROI": 0}
         for tid in sorted(tracks, key=lambda t: min(tracks[t])):
             det = tracks[tid]
             good = {fi: d for fi, d in det.items() if d[1] >= args.prompt_conf}
             if len(det) < args.min_len or not good:
                 dropped["short / weak"] += 1
+                continue
+            if args.roi_only and max(in_roi(d[2]) for d in det.values()) < 0.2:
+                dropped["outside ROI"] += 1
                 continue
             votes = np.zeros(len(C.CLASSES))
             for c, cf, _ in det.values():
@@ -106,6 +132,7 @@ def main():
                 dropped["duplicate"] += 1
                 continue
             kept.append(det)
+            kept_cls.append(cls)
             obj = len(kept)
             chosen = [first]
             if args.every:
@@ -117,9 +144,7 @@ def main():
                 entries.append({"frame": files[fi], "obj": obj, "cls": cls, "box": good[fi][2]})
 
         prompts[clip] = sorted(entries, key=lambda e: (e["frame"], e["obj"]))
-        per_cls = [sum(1 for d in kept if np.argmax(
-            np.bincount([c for c, _, _ in d.values()], minlength=len(C.CLASSES))) == k)
-            for k in range(len(C.CLASSES))]
+        per_cls = [kept_cls.count(k) for k in range(len(C.CLASSES))]   # same class as in the prompts
         print(f"  {clip}: {len(tracks)} tracks -> {len(kept)} objects "
               f"({', '.join(f'{C.CLASSES[k]} {per_cls[k]}' for k in range(len(C.CLASSES)))}), "
               f"{len(entries)} prompts | dropped: {dropped}")
