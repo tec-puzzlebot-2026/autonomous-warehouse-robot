@@ -243,7 +243,8 @@ class ProgramManager(Node):
                                  self._on_landmarks, 5)
 
         # ── readiness probes ─────────────────────────────────────────────
-        self._msg_probes = {}           # topic -> {'count', 'last'}
+        self._msg_probes = {}           # topic -> {'seen', 'sub'}
+        self._ready_steps = set()       # names of steps found ready (sticky while alive)
         self._graph_cache = (0.0, set(), set(), set())
         self._sim_clock = {'first': None, 'last': None, 'wall': 0.0}
         if Clock is not None:
@@ -326,6 +327,12 @@ class ProgramManager(Node):
 
     def launch(self, step):
         # Placeholders are filled in now: {mission_dir} exists only after mapping.
+        # A (re)started step must prove it is ready again with fresh messages.
+        self._ready_steps.discard(step.name)
+        for check in step.ready:
+            (kind, value), = check.items()
+            if kind == 'message':
+                self._drop_probe(value)
         return self.sup.start(step.name, ' '.join(step.cmd.format(**self.placeholders).split()))
 
     def alive(self, step):
@@ -354,7 +361,17 @@ class ProgramManager(Node):
         return self.sup.stop_many_async([s.name for s in steps if not s.external])
 
     def ready(self, step):
-        return all(self._check(c) for c in step.ready)
+        """Readiness is checked until the step is ready once, then remembered while
+        its process lives: the checks query the ROS graph and subscribe to topics,
+        which costs CPU on the Jetson if repeated for every status update."""
+        if step.name in self._ready_steps:
+            if self.alive(step):
+                return True
+            self._ready_steps.discard(step.name)
+        if all(self._check(c) for c in step.ready):
+            self._ready_steps.add(step.name)
+            return True
+        return False
 
     def send_explorer(self, cmd):
         self.explorer_pub.publish(String(data=cmd))
@@ -503,7 +520,7 @@ class ProgramManager(Node):
     def _graph_snapshot(self):
         """Service and node names (cached for half a second)."""
         t, services, nodes, topics = self._graph_cache
-        if time.monotonic() - t > 0.5:
+        if time.monotonic() - t > 1.0:
             services = {n for n, _ in self.get_service_names_and_types()}
             nodes = {('/' + ns.strip('/') + '/' + n).replace('//', '/')
                      for n, ns in self.get_node_names_and_namespaces()}
@@ -534,25 +551,34 @@ class ProgramManager(Node):
         return False
 
     def _message_seen(self, topic, topics):
-        """True once a message arrived on `topic` (raw subscription, no decoding)."""
+        """True once a message arrived on `topic`. The probe subscription (raw, no
+        decoding) is removed after the first message: staying subscribed to the
+        scans, encoders and map would wake this node dozens of times a second."""
         probe = self._msg_probes.get(topic)
         if probe is None:
             types = topics.get(topic)
             if not types or get_message is None:
                 return False
-            probe = {'count': 0, 'last': 0.0}
+            probe = {'seen': False, 'sub': None}
 
             def on_msg(_msg, p=probe):
-                p['count'] += 1
-                p['last'] = time.monotonic()
+                p['seen'] = True
             try:
-                self.create_subscription(get_message(types[0]), topic, on_msg,
-                                         qos_profile_sensor_data, raw=True)
+                probe['sub'] = self.create_subscription(
+                    get_message(types[0]), topic, on_msg, qos_profile_sensor_data, raw=True)
             except Exception as exc:
                 self._log_line(f'cannot probe {topic}: {exc}')
                 return False
             self._msg_probes[topic] = probe
-        return probe['count'] > 0 and time.monotonic() - probe['last'] < 10.0
+        if probe['seen'] and probe['sub'] is not None:
+            self.destroy_subscription(probe['sub'])
+            probe['sub'] = None
+        return probe['seen']
+
+    def _drop_probe(self, topic):
+        probe = self._msg_probes.pop(topic, None)
+        if probe and probe['sub'] is not None:
+            self.destroy_subscription(probe['sub'])
 
     def _on_clock(self, msg):
         t = msg.clock.sec + 1e-9 * msg.clock.nanosec

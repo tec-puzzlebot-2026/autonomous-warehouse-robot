@@ -37,6 +37,8 @@ modes:
       cmd_vel_in: /cmd_vel                  # velocity commands (Sendero, Frontera, restock)
       odom_args: ""                         # wheel odometry from /joint_states
       frontera_args: ""
+      slam_tuning: ""
+      sendero_args: ""
       image_topic: /camera/image_raw        # Isaac renders clean images
       # Detector models: file names in main_ros/main_ros/vision/models/ (found from
       # where main_ros is installed). onnxruntime on the Spark.
@@ -54,6 +56,13 @@ modes:
       odom_args: "-p input:=encoders -p wheel_radius:=0.0505 -p wheel_separation:=0.183 -p publish_rate_hz:=20.0"
       # The Jetson: one frontier decision takes ~1.4 s, so do not ask for 5 per second.
       frontera_args: "-p decision_rate_hz:=1.0"
+      # The Jetson: publish the map every 2 s instead of every 1 s (next knob if
+      # Planisferio still uses a whole core: -p num_particles:=120).
+      slam_tuning: "-p map_publish_period:=2.0"
+      # Sendero: every 3rd of the RPLidar's 1080 beams is plenty for obstacles,
+      # costmaps published less often, and slower, gentler turns: fast spins in
+      # place make the wheels slip and the wheel odometry over-count the turn.
+      sendero_args: "-p scan_beam_step:=3 -p local_costmap_publish_period_s:=1.0 -p global_costmap_publish_period_s:=5.0 -p max_vel_theta:=0.6 -p acc_lim_theta:=1.0"
       image_topic: /camera/image_rect       # color-corrected: what the models were trained on
       # TensorRT FP16 engines built on the Jetson from the .onnx files (same folder).
       logo_model: logos_yolo11n.engine
@@ -185,7 +194,7 @@ steps:
 
   - name: slam
     role: slam
-    cmd: "ros2 run planisferio slam --ros-args --params-file {config_dir}/slam_params.yaml -p use_sim_time:={use_sim_time} -p save_dir:={maps_dir} {slam_args}"
+    cmd: "ros2 run planisferio slam --ros-args --params-file {config_dir}/slam_params.yaml -p use_sim_time:={use_sim_time} -p save_dir:={maps_dir} {slam_tuning} {slam_args}"
     ready:
       - message: /map
       - service: /slam/save_map
@@ -194,7 +203,7 @@ steps:
 
   - name: sendero
     with_previous: true
-    cmd: "ros2 run sendero navigator --ros-args -r __node:=sendero --params-file {config_dir}/sendero_puzzlebot.yaml -p use_sim_time:={use_sim_time} -p cmd_vel_topic:={cmd_vel_in}"
+    cmd: "ros2 run sendero navigator --ros-args -r __node:=sendero --params-file {config_dir}/sendero_puzzlebot.yaml -p use_sim_time:={use_sim_time} -p cmd_vel_topic:={cmd_vel_in} {sendero_args}"
     ready:
       - action: /navigate_to_pose
       - message: /navigation/status
