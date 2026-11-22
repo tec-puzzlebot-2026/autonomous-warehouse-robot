@@ -134,6 +134,47 @@ class FakePorts:
         self.restock = FakeRestock(mission, folder)
         return self.restock
 
+    def make_tour(self):
+        self.tour = FakeTour()
+        return self.tour
+
+    def load_grid(self, folder):
+        return 'grid of ' + folder
+
+    def plan_route(self, folder):
+        self.planned = folder
+        return Handle((True, '12 viewpoints, 9.5 m, 98 % of the edges'), 0.5, self)
+
+
+class FakeTour:
+    """Stands in for map_tour.MapTour: finishes when .done is set."""
+
+    def __init__(self):
+        self.done = self.paused = False
+        self.outcome, self.detail = '', ''
+        self.calls = []
+
+    def start(self, grid):
+        self.calls.append(('start', grid))
+
+    def tick(self):
+        pass
+
+    def pause(self):
+        self.paused = True
+        self.calls.append('pause')
+
+    def resume(self):
+        self.paused = False
+        self.calls.append('resume')
+
+    def finish_early(self):
+        self.done, self.outcome = True, 'stopped by the operator'
+        self.calls.append('finish_early')
+
+    def snapshot(self):
+        return {'goal': 1}
+
 
 class FakeRestock:
     """Stands in for restock_core.RestockCore."""
@@ -173,10 +214,19 @@ STEPS = [
     mc.Step('isaac_sim', '', [{'clock': '/clock'}], 30.0),
     mc.Step('wheel_odometry', 'ros2 run main_ros wheel_odometry', [{'message': '/wheel/odom'}], 10.0),
     mc.Step('slam', 'ros2 run planisferio slam', [{'message': '/map'}], 10.0, role='slam'),
-    mc.Step('sendero', 'ros2 launch sendero sendero.launch.py', [{'action': '/navigate_to_pose'}], 10.0),
+    mc.Step('sendero', 'ros2 run sendero navigator', [{'action': '/navigate_to_pose'}], 10.0),
     mc.Step('frontera', 'ros2 run frontera exploration_manager',
-            [{'message': '/exploration/status'}], 10.0, role='explorer', phase='mapping'),
+            [{'message': '/exploration/status'}], 10.0, role='explorer', stage='mapping'),
+    mc.Step('camera', 'ros2 launch main_ros vision.launch.py', [{'message': '/camera/image'}],
+            10.0, stage='quality'),
+    mc.Step('landmark_mapper', 'ros2 run main_ros landmark_mapper', [{'node': '/lm'}], 10.0,
+            stage='quality'),
+    mc.Step('ekf', 'ros2 launch main_ros ekf_localization.launch.py',
+            [{'message': '/ekf/status'}], 10.0, stage='restocking'),
+    mc.Step('forklift', 'ros2 run main_ros forklift_placeholder',
+            [{'action': '/forklift/pick_box'}], 10.0, stage='restocking'),
 ]
+CORE = {'wheel_odometry', 'slam', 'sendero'}
 
 
 def run(core, ports, seconds, dt=0.1):
@@ -185,68 +235,76 @@ def run(core, ports, seconds, dt=0.1):
         core.tick()
 
 
-def ready_system():
+def ready_system(**kw):
     p = FakePorts()
-    core = mc.MissionCore(STEPS, p)
+    core = mc.MissionCore(STEPS, p, **kw)
     assert core.command('S')[0]
     run(core, p, 10)
-    assert core.state == mc.READY, core.detail
     return core, p
 
 
-def test_bringup_never_moves_the_robot():
-    core, p = ready_system()
-    assert ('explorer', 'START') not in p.sent
-    assert set(p.running) == {'wheel_odometry', 'slam', 'sendero', 'frontera'}
-
-
-def test_full_mapping_run_to_restocking_stub():
-    core, p = ready_system()
+def map_stage_1(core, p):
+    """Stage 1 to its end: S, Frontera explores, COMPLETE -> MAPPING_DONE."""
+    assert core.state == mc.READY, core.detail
     p.explorer = 'WAITING_FOR_START'
-    assert core.command('s')[0]
-    assert core.state == mc.EXPLORING
-    assert p.sent[-1] == ('explorer', 'START')
+    assert core.command('s')[0] and core.state == mc.EXPLORING
     p.explorer = 'EXPLORING'
-    run(core, p, 5)
+    run(core, p, 2)
     p.explorer = 'COMPLETE'
-    run(core, p, 1)
-    assert core.state == mc.FINISHING
     run(core, p, 10)
     assert core.state == mc.MAPPING_DONE, core.detail
+
+
+def test_bringup_starts_only_stage_1_and_never_moves():
+    core, p = ready_system()
+    assert core.state == mc.READY
+    assert ('explorer', 'START') not in p.sent
+    assert set(p.running) == CORE | {'frontera'}          # no camera, EKF or forklift
+
+
+def test_stage_1_saves_the_map_and_a_mission_folder_then_waits():
+    core, p = ready_system()
+    map_stage_1(core, p)
     assert p.services[:2] == ['slam_optimize', 'slam_save']
     assert core.last_map['ok'] and core.last_map['message'] == '/ws/maps/m'
-    assert 'mission:=restocking' in core.detail          # mission:=mapping
     assert core.mission_folder == '/ws/maps/missions/20260101_120000'
     assert p.saved_missions == ['Saved /ws/maps/m.pgm and /ws/maps/m.yaml']
-    ok, msg = core.command('R')
-    assert not ok and 'mission:=full' in msg
+    snap = core.snapshot()
+    assert {'START', 'SKIP'} <= set(snap['allowed'])
+    assert snap['stages'][0][2] == 'done' and snap['stages'][1][2] == 'todo'
+    run(core, p, 30)
+    assert core.state == mc.MAPPING_DONE                   # waits for a key
 
 
-PHASE2 = STEPS + [
-    mc.Step('ekf', 'ros2 launch main_ros ekf_localization.launch.py', [{'message': '/ekf/status'}],
-            10.0, phase='restocking'),
-    mc.Step('forklift', 'ros2 run main_ros forklift_placeholder',
-            [{'action': '/forklift/pick_box'}], 10.0, phase='restocking'),
-    mc.Step('landmark_mapper', 'ros2 run main_ros landmark_mapper', [{'node': '/lm'}], 10.0),
-]
-
-
-def test_full_mission_maps_then_restocks():
-    p = FakePorts()
-    core = mc.MissionCore(PHASE2, p, mission='full')
-    core.command('S')
-    run(core, p, 10)
-    assert core.state == mc.READY
-    assert 'ekf' not in p.running and 'landmark_mapper' in p.running
-    core.command('S')
-    p.explorer = 'COMPLETE'
-    run(core, p, 12)
-    assert core.state == mc.MAPPING_DONE and 'Press R' in core.detail
-    assert core.command('R')[0] and core.state == mc.PHASE2_BRINGUP
-    assert 'frontera' not in p.running                 # Frontera closed on purpose ...
+def test_all_four_stages_with_a_key_after_each():
+    core, p = ready_system()
+    map_stage_1(core, p)
+    # stage 2: Frontera closed, camera + landmark mapper started, the tour drives
+    assert core.command('S')[0] and core.state == mc.STAGE_BRINGUP
+    assert 'frontera' not in p.running
     run(core, p, 5)
-    assert core.state == mc.RESTOCKING, core.detail   # ... and that is not a failure
-    assert {'ekf', 'forklift'} <= set(p.running)
+    assert core.state == mc.QUALITY, core.detail
+    assert {'camera', 'landmark_mapper'} <= set(p.running)
+    assert p.tour.calls[0] == ('start', 'grid of /ws/maps/missions/20260101_120000')
+    assert core.command('P')[0] and core.state == mc.QUALITY_PAUSED and p.tour.paused
+    assert core.command('S')[0] and core.state == mc.QUALITY and not p.tour.paused
+    p.tour.done, p.tour.outcome = True, 'tour complete (0 goals skipped)'
+    run(core, p, 10)
+    assert core.state == mc.QUALITY_DONE, core.detail
+    assert len(p.saved_missions) == 2                     # a new folder with the landmarks
+    assert 'SAVE_MAP' not in core.allowed()
+    # stage 3: the route, then wait
+    assert core.command('S')[0] and core.state == mc.PLANNING
+    run(core, p, 1)
+    assert core.state == mc.ROUTE_READY and '12 viewpoints' in core.detail
+    run(core, p, 10)
+    assert core.state == mc.ROUTE_READY
+    # stage 4: EKF + forklift started, Planisferio localization only, restocking runs
+    assert core.command('S')[0] and core.state == mc.STAGE_BRINGUP
+    run(core, p, 5)
+    assert core.state == mc.RESTOCKING, core.detail
+    assert {'ekf', 'forklift'} <= set(p.running) and 'frontera' not in p.running
+    assert 'slam_localization_only' in p.services
     r = p.restock
     assert r.started and r.mission == 'full' and r.folder == core.mission_folder
     assert core.command('P')[0] and core.state == mc.RESTOCK_PAUSED and r.paused
@@ -259,31 +317,67 @@ def test_full_mission_maps_then_restocks():
     r.done, r.outcome = True, 'COMPLETE: route finished'
     run(core, p, 0.2)
     assert core.state == mc.RESTOCK_DONE
-    assert core.snapshot()['restock'] == {'state': 'LOAD'}
-
-
-def test_restocking_mission_brings_up_phase2_steps_and_starts_on_s():
-    p = FakePorts()
-    core = mc.MissionCore(PHASE2, p, mission='restocking')
-    assert 'frontera' not in [s.name for s in core.steps]
-    core.command('S')
-    run(core, p, 10)
-    assert core.state == mc.READY and 'start restocking' in core.detail
-    assert {'ekf', 'forklift', 'landmark_mapper'} <= set(p.running)
-    assert mc.RESET not in core.allowed() and mc.SAVE_MAP not in core.allowed()
-    core.command('S')
-    assert core.state == mc.RESTOCKING and p.restock.mission == 'restocking'
-    # A script dies: the restocking pauses, the bring-up restarts it, S resumes.
-    p.running.pop('ekf')
-    run(core, p, 0.2)
-    assert core.state == mc.ERROR and p.restock.paused
-    core.command('S')
-    run(core, p, 10)
-    assert core.state == mc.READY
-    core.command('S')
-    assert core.state == mc.RESTOCKING and p.restock.calls.count('start') == 1
+    assert [m for _, _, m in core.stage_progress()] == ['done'] * 4
     core.command('X')
-    assert 'abort' in p.restock.calls
+    run(core, p, 5)
+    assert 'abort' in r.calls and not p.running
+    assert p.services.count('slam_save') == 2              # no save once the map is final
+
+
+def test_k_skips_stage_2_and_restocking_starts_the_camera_itself():
+    core, p = ready_system()
+    map_stage_1(core, p)
+    assert core.command('K')[0] and core.state == mc.PLANNING
+    assert 'frontera' not in p.running and p.planned == core.mission_folder
+    run(core, p, 1)
+    assert core.state == mc.ROUTE_READY
+    assert [m for _, _, m in core.stage_progress()] == ['done', 'skipped', 'done', 'todo']
+    core.command('S')
+    run(core, p, 6)
+    assert core.state == mc.RESTOCKING, core.detail
+    assert {'camera', 'landmark_mapper', 'ekf', 'forklift'} <= set(p.running)
+
+
+def test_finish_ends_the_tour_early_and_saves():
+    core, p = ready_system()
+    map_stage_1(core, p)
+    core.command('S')
+    run(core, p, 5)
+    assert core.command('F')[0] and core.state == mc.FINISHING
+    assert 'finish_early' in p.tour.calls
+    run(core, p, 10)
+    assert core.state == mc.QUALITY_DONE
+
+
+def test_saved_map_waits_for_the_pose_then_offers_stage_2():
+    core, p = ready_system(start_folder='/ws/maps/missions/old')
+    assert 'frontera' not in p.running and set(p.running) == CORE
+    assert core.state == mc.LOCALIZING
+    run(core, p, 5)
+    assert core.state == mc.LOCALIZING                    # no pose yet
+    p.slam['localized'] = '1'                             # RViz 2D Pose Estimate
+    run(core, p, 0.2)
+    assert core.state == mc.MAPPING_DONE
+    assert mc.RESET not in core.allowed()
+    assert core.command('K')[0]
+    run(core, p, 1)
+    assert core.state == mc.ROUTE_READY and p.planned == '/ws/maps/missions/old'
+
+
+def test_an_error_in_stage_2_resumes_the_tour_after_the_bringup():
+    core, p = ready_system()
+    map_stage_1(core, p)
+    core.command('S')
+    run(core, p, 5)
+    del p.running['camera']                               # the camera crashed
+    run(core, p, 0.2)
+    assert core.state == mc.ERROR and p.tour.paused
+    core.command('S')
+    run(core, p, 6)
+    assert core.state == mc.QUALITY_PAUSED, core.detail
+    assert 'frontera' not in p.running                    # still closed
+    core.command('S')
+    assert core.state == mc.QUALITY
 
 
 def test_pause_resume_and_finish_by_operator():
@@ -362,11 +456,11 @@ def test_commands_rejected_in_wrong_states():
     p = FakePorts()
     core = mc.MissionCore(STEPS, p)
     assert not core.command('P')[0]
-    assert not core.command('R')[0]
+    assert not core.command('K')[0]
     assert not core.command('hello')[0]
     core, p = ready_system()
-    assert not core.command('R')[0]           # restocking only after mapping
-    assert 'R' not in core.snapshot()['allowed']
+    assert not core.command('K')[0]           # nothing to skip before stage 1 is done
+    assert 'SKIP' not in core.snapshot()['allowed']
 
 
 @pytest.mark.parametrize('word', ['S', 'start', 'C', 'resume'])

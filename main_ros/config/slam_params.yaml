@@ -106,5 +106,6 @@
 
     # Odometry / TF timing
     max_odom_gap: 0.15
+    odom_wait: 0.5            # [s] the Jetson delivers odometry late: a scan waits for it
     tf_publish_rate: 20.0
     tf_post_date: 0.1

@@ -8,40 +8,41 @@ stops scripts, sends them short commands and waits for their answers through
 a `ports` object (implemented by the ROS node in program_manager.py, and by
 a fake in the tests).
 
-Phase 1 — autonomous mapping (implemented)
+One run goes through four stages. After each stage the robot stops and the
+monitor waits for a key: S starts the next stage, K skips the optional one.
+Each stage starts only the scripts it needs, and closes the ones it no longer
+needs (Frontera after stage 1), so the Jetson is never running everything.
 
-  IDLE ──S──> BRINGUP ──all scripts ready──> READY ──S──> EXPLORING
-                 │                              ^            │  ^
-              failure                           │          P │  │ S
-                 v                              │            v  │
-               ERROR <── a script died ─────────┼──────── PAUSED
-                                                │            │
-       EXPLORING / PAUSED ──F, or Frontera ends─┴──> FINISHING
-                        (stop exploring, optimize the pose graph, save the map)
-                                                         │
-                                                         v
-                                                    MAPPING_DONE ──R──> PHASE2_BRINGUP
-                                                                     (mission:=full)
+  Stage 1  MAPPING       bring-up, odometry, Planisferio, Sendero, Frontera
+           IDLE ─S─> BRINGUP ─> READY ─S─> EXPLORING ⇄P/S⇄ PAUSED
+                     ─F, or Frontera ends─> FINISHING (optimize, save) ─> MAPPING_DONE
+  Stage 2  MAP QUALITY   (optional, K skips it) + camera, ArUco, logos, landmark mapper;
+           Frontera closed. The robot drives along every edge of the map and back to
+           its start (map_tour.py) while Planisferio keeps mapping: loop closures,
+           ArUco markers and logos placed on the map.
+           MAPPING_DONE ─S─> STAGE_BRINGUP ─> QUALITY ⇄P/S⇄ QUALITY_PAUSED
+                     ─tour ends, or F─> FINISHING ─> QUALITY_DONE
+  Stage 3  ROUTE         the restocking patrol route on the final map (no motion)
+           QUALITY_DONE ─S─> PLANNING ─> ROUTE_READY      (MAPPING_DONE ─K─> PLANNING)
+  Stage 4  RESTOCKING    + EKF, box detectors, QR, forklift; Planisferio switches to
+           localization only (restock/restock_core.py does the work)
+           ROUTE_READY ─S─> STAGE_BRINGUP ─> RESTOCKING ⇄P/S⇄ RESTOCK_PAUSED ─> RESTOCK_DONE
 
-Phase 2 — restocking (restock/restock_core.py does the work)
+  A saved map (map:=<mission folder>): BRINGUP loads it into Planisferio, then
+  LOCALIZING waits for the robot's pose (RViz 2D Pose Estimate), then MAPPING_DONE:
+  S improves that map (stage 2), K goes straight to the route (stage 3).
 
-  mission:=restocking   IDLE ─S─> BRINGUP (every step, the map is loaded) ─> READY ─S─> RESTOCKING
-  mission:=full         MAPPING_DONE ─R─> PHASE2_BRINGUP (the Phase-2 steps) ─> RESTOCKING
-  RESTOCKING ─P─> RESTOCK_PAUSED ─S─> RESTOCKING ... ─> RESTOCK_DONE
-  A failure the robot cannot handle (no ArUco found, a set-down that fails while
-  holding the box) also stops in RESTOCK_PAUSED: S retries the step.
+  Every mission folder (end of stage 1 and of stage 2) holds the map, the
+  Planisferio session, the markers, logos and docks found so far, and the EKF file.
 
-  mission:=mapping      Phase 1 only; the end of mapping saves a mission folder.
-
-  N (reset) from READY / EXPLORING / PAUSED / MAPPING_DONE / RESTOCKING / ERROR:
-      stop the robot, restart Frontera, clear SLAM and Sendero -> BRINGUP -> READY
-  X (stop) from any active state:
-      stop the robot, save the map, close every script -> STOPPED (S brings it up again)
-  M (save map): whenever SLAM is running.
+  N (reset, stage 1 only): stop the robot, restart Frontera, clear SLAM -> READY
+  X (stop) from any active state: stop, save the map (stages 1-2), close everything
+  M (save map): whenever SLAM is running and the map is still changing.
+  An error stops in ERROR; S brings the scripts up again and returns to where the
+  run was (a paused tour or restocking continues with S).
 
 Safety rules kept from the CALL-M program manager:
-  * bringing the system up never moves the robot; exploration starts only on
-    an explicit S in READY;
+  * bringing the system up never moves the robot; motion starts only on S;
   * every state change that ends motion halts the robot first (Frontera,
     Sendero and a zero velocity);
   * a script that dies while the mission runs halts the robot (ERROR).
@@ -54,13 +55,19 @@ from dataclasses import dataclass, field
 
 IDLE = 'IDLE'
 BRINGUP = 'BRINGUP'
+LOCALIZING = 'LOCALIZING'
 READY = 'READY'
 EXPLORING = 'EXPLORING'
 PAUSED = 'PAUSED'
 FINISHING = 'FINISHING'
 MAPPING_DONE = 'MAPPING_DONE'
+STAGE_BRINGUP = 'STAGE_BRINGUP'
+QUALITY = 'QUALITY'
+QUALITY_PAUSED = 'QUALITY_PAUSED'
+QUALITY_DONE = 'QUALITY_DONE'
+PLANNING = 'PLANNING'
+ROUTE_READY = 'ROUTE_READY'
 RESTOCKING = 'RESTOCKING'
-PHASE2_BRINGUP = 'PHASE2_BRINGUP'
 RESTOCK_PAUSED = 'RESTOCK_PAUSED'
 RESTOCK_DONE = 'RESTOCK_DONE'
 RESETTING = 'RESETTING'
@@ -71,18 +78,18 @@ ERROR = 'ERROR'
 START = 'START'
 PAUSE = 'PAUSE'
 FINISH = 'FINISH'
+SKIP = 'SKIP'
 SAVE_MAP = 'SAVE_MAP'
-RESTOCK = 'RESTOCK'
 RESET = 'RESET'
 STOP = 'STOP'
 
 # Keys / words accepted on the command topic.
 ALIASES = {
-    'S': START, 'START': START, 'C': START, 'CONFIRM': START, 'RESUME': START,
+    'S': START, 'START': START, 'C': START, 'CONFIRM': START, 'RESUME': START, 'NEXT': START,
     'P': PAUSE, 'PAUSE': PAUSE,
     'F': FINISH, 'FINISH': FINISH, 'FINISH_MAPPING': FINISH,
+    'K': SKIP, 'SKIP': SKIP,
     'M': SAVE_MAP, 'SAVE_MAP': SAVE_MAP, 'SAVE': SAVE_MAP,
-    'R': RESTOCK, 'RESTOCK': RESTOCK, 'START_RESTOCKING': RESTOCK,
     'N': RESET, 'RESET': RESET,
     'X': STOP, 'STOP': STOP,
 }
@@ -90,12 +97,18 @@ ALIASES = {
 ALLOWED = {
     IDLE: [START],
     BRINGUP: [STOP],
+    LOCALIZING: [STOP],
     READY: [START, SAVE_MAP, RESET, STOP],
     EXPLORING: [PAUSE, FINISH, SAVE_MAP, RESET, STOP],
     PAUSED: [START, FINISH, SAVE_MAP, RESET, STOP],
     FINISHING: [STOP],
-    MAPPING_DONE: [RESTOCK, SAVE_MAP, RESET, STOP],
-    PHASE2_BRINGUP: [STOP],
+    MAPPING_DONE: [START, SKIP, SAVE_MAP, RESET, STOP],
+    STAGE_BRINGUP: [STOP],
+    QUALITY: [PAUSE, FINISH, SAVE_MAP, STOP],
+    QUALITY_PAUSED: [START, FINISH, SAVE_MAP, STOP],
+    QUALITY_DONE: [START, SAVE_MAP, STOP],
+    PLANNING: [STOP],
+    ROUTE_READY: [START, STOP],
     RESTOCKING: [PAUSE, STOP],
     RESTOCK_PAUSED: [START, STOP],
     RESTOCK_DONE: [STOP],
@@ -105,18 +118,26 @@ ALLOWED = {
     ERROR: [START, SAVE_MAP, RESET, STOP],
 }
 
-# What START does in each state (shown by the monitor next to the S key).
-START_MEANING = {IDLE: 'bring up', STOPPED: 'bring up', READY: 'start exploring',
-                 PAUSED: 'resume', ERROR: 'retry bring-up', RESTOCK_PAUSED: 'resume restocking'}
+# What S and K do in each state (shown by the monitor next to the keys).
+START_MEANING = {
+    IDLE: 'bring up', STOPPED: 'bring up', READY: 'start mapping', PAUSED: 'resume mapping',
+    ERROR: 'retry the bring-up', MAPPING_DONE: 'improve the map (stage 2)',
+    QUALITY_PAUSED: 'resume the map tour', QUALITY_DONE: 'plan the route (stage 3)',
+    ROUTE_READY: 'start restocking (stage 4)', RESTOCK_PAUSED: 'resume restocking',
+}
+SKIP_MEANING = {MAPPING_DONE: 'skip to the route'}
 
 # Frontera end states (its /exploration/status once a run is over).
 EXPLORATION_END = ('COMPLETE', 'COMPLETE_PARTIAL', 'STAGNATED', 'TIME_LIMIT')
 
 # States in which the launched scripts must stay alive.
-SUPERVISED = (READY, EXPLORING, PAUSED, FINISHING, MAPPING_DONE, RESTOCKING,
-              PHASE2_BRINGUP, RESTOCK_PAUSED, RESTOCK_DONE)
+SUPERVISED = (LOCALIZING, READY, EXPLORING, PAUSED, FINISHING, MAPPING_DONE, QUALITY,
+              QUALITY_PAUSED, QUALITY_DONE, PLANNING, ROUTE_READY, RESTOCKING,
+              RESTOCK_PAUSED, RESTOCK_DONE)
 
-MISSIONS = ('mapping', 'restocking', 'full')
+STAGES = ('core', 'mapping', 'quality', 'restocking')
+STAGE_TITLES = (('mapping', '1 map'), ('quality', '2 quality'), ('route', '3 route'),
+                ('restocking', '4 restock'))
 
 
 @dataclass
@@ -131,12 +152,12 @@ class Step:
         critical: If it dies while the mission runs, the robot is halted.
         role: 'explorer' (restarted on RESET), 'slam' (map services) or ''.
         hint: Extra text for the operator when it does not become ready.
-        phase: 'both' (default), 'mapping' (Phase 1 only) or 'restocking'
-            (Phase 2 only: in mission:=full it starts when R is pressed).
+        stage: 'core' (started at bring-up, runs the whole time), 'mapping'
+            (stage 1 only: Frontera), 'quality' (from stage 2 on: camera, ArUco,
+            logos, landmark mapper) or 'restocking' (stage 4).
         with_previous: True = started together with the step before it instead
             of after it is ready (steps that do not need each other start in
             parallel); its readiness is still checked in order.
-        group: '' or a name ('vision') the operator can leave out at launch.
     """
     name: str
     cmd: str = ''
@@ -145,9 +166,8 @@ class Step:
     critical: bool = True
     role: str = ''
     hint: str = ''
-    phase: str = 'both'
+    stage: str = 'core'
     with_previous: bool = False
-    group: str = ''
 
     @property
     def external(self):
@@ -167,6 +187,7 @@ class MissionSettings:
     save_map_on_stop: bool = True
     stop_timeout_s: float = 15.0
     exit_on_stop: bool = True       # after X: the Program Manager (and the launch) closes
+    plan_timeout_s: float = 120.0   # stage 3 on the Jetson
 
 
 def describe_checks(checks):
@@ -182,45 +203,61 @@ def describe_checks(checks):
 
 
 class MissionCore:
-    """Phase-1 mission state machine (autonomous mapping)."""
+    """The four-stage mission state machine."""
 
-    def __init__(self, steps, ports, settings=None, mode='sim', mission='mapping'):
+    def __init__(self, steps, ports, settings=None, mode='sim', start_folder=None):
         """Create the state machine in IDLE.
 
         Args:
-            steps: List of Step, in start-up order.
-            ports: Object with the methods listed in the module docstring of
-                program_manager.py (launch, alive, ready, ...).
+            steps: List of Step, in start-up order (all stages).
+            ports: Object with the methods listed in program_manager.py.
             settings: MissionSettings.
             mode: 'sim' or 'real' (informational).
-            mission: 'mapping', 'restocking' or 'full' (see the module docstring).
+            start_folder: A saved mission folder to start from (map:=). Stage 1 is
+                skipped: Planisferio loads that map and waits for the robot's pose.
         """
-        if mission not in MISSIONS:
-            raise ValueError(f'mission must be one of {MISSIONS}, got {mission!r}')
-        self.mission = mission
-        first = ('both', 'restocking') if mission == 'restocking' else ('both', 'mapping')
-        self.steps = [s for s in steps if s.phase in first]
-        self.phase2_steps = ([s for s in steps if s.phase == 'restocking']
-                             if mission == 'full' else [])
-        self.phase2_started = False
-        self.retired = set()            # steps closed on purpose (Frontera in Phase 2)
-        self.restock = None             # restock_core.RestockCore while Phase 2 runs
-        self.mission_folder = None      # set after mapping, or the folder Phase 2 loads
+        for s in steps:
+            if s.stage not in STAGES:
+                raise ValueError(f'step {s.name}: stage must be one of {STAGES}')
+        self.all_steps = list(steps)
+        self.loaded_map = bool(start_folder)
+        self.mission_folder = start_folder or None
         self.p = ports
         self.s = settings or MissionSettings()
         self.mode = mode
+        self.started_stages = {'core'} | (set() if self.loaded_map else {'mapping'})
+        self.retired = set()            # steps closed on purpose (Frontera after stage 1)
+        self.done_stages = set()        # 'mapping', 'quality', 'route', 'restocking'
+        self.skipped_stages = set()
+        if self.loaded_map:
+            self.done_stages.add('mapping')
+        self.tour = None                # map_tour.MapTour during stage 2
+        self.restock = None             # restock_core.RestockCore during stage 4
+        self.route_info = ''
+        self.was_localized = False      # map:= run: Planisferio got the robot's pose
         self.state = IDLE
         self.detail = 'Press S to bring the system up.'
         self.exit_requested = False     # X finished and exit_on_stop: close the manager
         self.state_since = self.p.now()
         self.started_at = self.p.now()
         self.end_class = ''
-        self.last_map = None            # {'ok', 'message', 'time', 'reason'}
+        self.last_map = None            # {'ok', 'message', 'time', 'reason', 'raw'}
         self.events = collections.deque(maxlen=60)
         self._op = {}                   # data of the composite operation in progress
         self._save = None               # map save in progress
-        self._event(f'Program Manager ready ({mode} mode, mission {mission}). '
-                    'Press S to bring the system up.')
+        self._event(f'Program Manager ready ({mode} mode'
+                    + (f', map {start_folder}' if start_folder else '')
+                    + '). Press S to bring the system up.')
+
+    # ── steps ────────────────────────────────────────────────────────────
+    @property
+    def steps(self):
+        """Steps of the stages started so far (minus the ones closed on purpose)."""
+        return [s for s in self.all_steps
+                if s.stage in self.started_stages and s.name not in self.retired]
+
+    def _stage_steps(self, stage):
+        return [s for s in self.all_steps if s.stage == stage and s.name not in self.retired]
 
     # =====================================================================
     # operator commands
@@ -228,21 +265,19 @@ class MissionCore:
     def allowed(self):
         """Commands accepted in the current state."""
         allowed = list(ALLOWED[self.state])
-        if SAVE_MAP in allowed and not self._slam_alive():
+        if SAVE_MAP in allowed and (not self._slam_alive() or 'quality' in self.done_stages
+                                    or self.state in (ROUTE_READY,)):
             allowed.remove(SAVE_MAP)
-        if self.mission == 'restocking':
-            for cmd in (SAVE_MAP, RESET):          # the loaded map is not changed
-                if cmd in allowed:
-                    allowed.remove(cmd)
-        if self.mission != 'full' and RESTOCK in allowed:
-            allowed.remove(RESTOCK)
+        if RESET in allowed and ('mapping' not in self.started_stages or self.retired
+                                 or self.loaded_map):
+            allowed.remove(RESET)
         return allowed
 
     def command(self, text):
         """Handle an operator command.
 
         Args:
-            text: A key (S, P, F, M, R, N, X) or a word (START, PAUSE, ...).
+            text: A key (S, P, F, K, M, N, X) or a word (START, PAUSE, ...).
 
         Returns:
             (accepted, message).
@@ -252,40 +287,56 @@ class MissionCore:
         if cmd is None:
             return self._reply(False, f'unknown command "{text}"')
         if cmd not in self.allowed():
-            if cmd == RESTOCK and self.mission == 'mapping':
-                return self._reply(False, 'R needs mission:=full; this run only maps. Start '
-                                   'Phase 2 with mission:=restocking (it loads the map '
-                                   'just saved)')
             return self._reply(False, f'{cmd} is not possible in {self.state}')
+        st = self.state
         if cmd == START:
-            if self.state in (IDLE, STOPPED, ERROR):
+            if st in (IDLE, STOPPED, ERROR):
                 self._begin_bringup(f'{word}: bringing the system up')
-            elif self.state == READY and self._restocking_run():
-                self._start_restocking()
-            elif self.state == READY:
+            elif st == READY:
                 self._start_exploring('START')
-            elif self.state == PAUSED:
+            elif st == PAUSED:
                 self._start_exploring('RESUME')
-            elif self.state == RESTOCK_PAUSED:
+            elif st == MAPPING_DONE:
+                self._begin_quality()
+            elif st == QUALITY_PAUSED:
+                self.p.send_navigation('RESUME')
+                self.tour.resume()
+                self._set(QUALITY, 'Map tour resumed.')
+            elif st == QUALITY_DONE:
+                self._begin_planning()
+            elif st == ROUTE_READY:
+                self._begin_restocking()
+            elif st == RESTOCK_PAUSED:
+                self.p.send_navigation('RESUME')
                 self.restock.resume()
                 self._set(RESTOCKING, 'Restocking resumed.')
-        elif cmd == PAUSE and self.state == RESTOCKING:
-            self.restock.pause()
-            self._halt(explorer='PAUSE', navigation='CANCEL')
-            self._set(RESTOCK_PAUSED, 'Restocking paused: the robot holds (a forklift action '
-                      'was canceled). S resumes.')
+        elif cmd == SKIP:
+            self.skipped_stages.add('quality')
+            self._event('Stage 2 (map quality) skipped')
+            self._begin_planning()
         elif cmd == PAUSE:
-            self._halt(explorer='PAUSE', navigation='PAUSE')
-            self._set(PAUSED, 'Paused: the robot holds. S resumes, F finishes mapping.')
+            if st == RESTOCKING:
+                self.restock.pause()
+                self._halt(explorer='PAUSE', navigation='CANCEL')
+                self._set(RESTOCK_PAUSED, 'Restocking paused: the robot holds (a forklift '
+                          'action was canceled). S resumes.')
+            elif st == QUALITY:
+                self.tour.pause()
+                self._halt(explorer='PAUSE', navigation='CANCEL')
+                self._set(QUALITY_PAUSED, 'Map tour paused: the robot holds. S resumes, '
+                          'F finishes the tour and saves the map.')
+            else:
+                self._halt(explorer='PAUSE', navigation='PAUSE')
+                self._set(PAUSED, 'Paused: the robot holds. S resumes, F finishes mapping.')
         elif cmd == FINISH:
-            self._begin_finish('FINISHED_BY_OPERATOR')
+            if st in (QUALITY, QUALITY_PAUSED):
+                self.tour.finish_early()
+                self._begin_finish('FINISHED_BY_OPERATOR', 'quality')
+            else:
+                self._begin_finish('FINISHED_BY_OPERATOR', 'mapping')
         elif cmd == SAVE_MAP:
             if not self._request_save('operator'):
                 return self._reply(False, 'a map save is already running')
-        elif cmd == RESTOCK:
-            if not self.mission_folder:
-                return self._reply(False, 'no mission folder was saved (press M, then R)')
-            self._begin_phase2()
         elif cmd == RESET:
             self._begin_reset()
         elif cmd == STOP:
@@ -302,7 +353,7 @@ class MissionCore:
     # =====================================================================
     def on_map_save_request(self, source='frontera'):
         """Frontera asked for a map save (its SAVE_MAP or auto-save)."""
-        if self._slam_alive():
+        if self._slam_alive() and self.state in (EXPLORING, PAUSED):
             self._request_save(source)
 
     # =====================================================================
@@ -318,74 +369,30 @@ class MissionCore:
         if self.state in SUPERVISED:
             self._check_health()
 
-    # ── bring-up ─────────────────────────────────────────────────────────
+    # =====================================================================
+    # bring-up (also used to start the scripts of a later stage)
+    # =====================================================================
     def _begin_bringup(self, why):
-        """Start (or verify) every step in order."""
-        self._op = {'i': 0, 'phase': 'check', 't0': self.p.now(), 'steps': self._run_steps()}
+        """Start (or verify) every step of the stages started so far."""
+        self._op = {'i': 0, 'phase': 'check', 't0': self.p.now(), 'steps': self.steps,
+                    'then': self._after_bringup}
         self._set(BRINGUP, 'Bringing the system up...')
         self._event(why)
         self.p.prepare_bringup()
 
-    # ── phase 2 ──────────────────────────────────────────────────────────
-    def _begin_phase2(self):
-        """mission:=full, R: close Frontera, start the Phase-2 scripts, then restock."""
-        self._halt(explorer='STOP', navigation='CANCEL')
-        self.p.send_navigation('RESUME')
-        explorers = [s for s in self.steps if s.role == 'explorer' and not s.external]
-        if explorers:
-            self.retired |= {s.name for s in explorers}
-            self.p.stop_steps(explorers)
-        self.phase2_started = True
-        self._op = {'i': 0, 'phase': 'check', 't0': self.p.now(), 'phase2': True,
-                    'steps': [s for s in self.phase2_steps]}
-        self._set(PHASE2_BRINGUP, 'Starting the Phase-2 scripts (detectors, EKF, forklift)...')
-        self._event(f'Phase 2: restocking with {self.mission_folder}')
+    def _begin_stage_steps(self, steps, then, text):
+        self._op = {'i': 0, 'phase': 'check', 't0': self.p.now(), 'steps': list(steps),
+                    'then': then}
+        self._set(STAGE_BRINGUP, text)
 
-    def _tick_phase2_bringup(self, now):
+    def _tick_stage_bringup(self, now):
         self._tick_bringup(now)
-
-    def _start_restocking(self):
-        """Create (or resume) the restocking state machine."""
-        if self.restock is not None and not self.restock.done:
-            self.restock.resume()
-            self._set(RESTOCKING, 'Restocking resumed after the bring-up.')
-            return
-        self.restock = self.p.make_restock(self.mission, self.mission_folder)
-        self.restock.start()
-        self._set(RESTOCKING, 'Restocking: loading the mission...')
-
-    def _tick_restocking(self, now):
-        r = self.restock
-        r.tick()
-        if r.done:
-            self._set(RESTOCK_DONE, f'RESTOCKING DONE: {r.outcome}. X closes everything.')
-            self.p.zero_velocity()
-            return
-        if r.error:
-            self._halt(explorer='PAUSE', navigation='CANCEL')
-            self._set(RESTOCK_PAUSED, f'{r.error} — S retries, X stops.')
-            return
-        self.detail = f'Restocking [{r.state} / {r.phase}]: {r.detail}'
-
-    def _run_steps(self):
-        """Steps the current run needs (Phase 2 steps once Phase 2 has started)."""
-        steps = list(self.steps) + (self.phase2_steps if self.phase2_started else [])
-        return [s for s in steps if s.name not in self.retired]
-
-    def _restocking_run(self):
-        return self.mission == 'restocking' or self.phase2_started
 
     def _tick_bringup(self, now):
         op = self._op
-        steps = op.get('steps') or self._run_steps()
+        steps = op['steps']
         if op['i'] >= len(steps):
-            if op.get('phase2'):
-                self._event('Phase 2 scripts ready.')
-                self._start_restocking()
-                return
-            what = 'start restocking' if self._restocking_run() else 'start exploring'
-            self._set(READY, f'System ready. The robot is still. Press S to {what}.')
-            self._event('All scripts ready.')
+            op['then']()
             return
         step = steps[op['i']]
         if op['phase'] == 'check':
@@ -437,14 +444,48 @@ class MissionCore:
         self._op['i'] += 1
         self._op['phase'] = 'check'
 
-    # ── exploring ────────────────────────────────────────────────────────
+    def _after_bringup(self):
+        """All scripts up: go where the run is (first start, or after an error)."""
+        self._event('All scripts ready.')
+        if self.restock is not None and not self.restock.done:
+            self._set(RESTOCK_PAUSED, 'Scripts ready again. S resumes restocking.')
+        elif 'route' in self.done_stages:
+            self._set(ROUTE_READY, f'Route ready: {self.route_info}. S starts restocking.')
+        elif self.tour is not None and not self.tour.done:
+            self._set(QUALITY_PAUSED, 'Scripts ready again. S resumes the map tour.')
+        elif 'quality' in self.done_stages:
+            self._set(QUALITY_DONE, 'Scripts ready again. S plans the restocking route.')
+        elif 'mapping' in self.done_stages and not self.loaded_map:
+            self._set(MAPPING_DONE, 'Scripts ready again. S improves the map, K skips to '
+                      'the route.')
+        elif self.loaded_map and not self.was_localized:
+            self._set(LOCALIZING, 'Map loaded. Give the robot its pose on the map: RViz '
+                      '"2D Pose Estimate" (/initialpose).')
+        elif self.loaded_map:
+            self._set(MAPPING_DONE, 'Map loaded and localized. S improves the map, K skips '
+                      'to the route.')
+        else:
+            self._set(READY, 'System ready. The robot is still. Press S to start mapping.')
+
+    # ── loaded map: wait for the pose ────────────────────────────────────
+    def _tick_localizing(self, now):
+        st = self.p.slam_status()
+        if str(st.get('localized', '0')) in ('1', 'true', 'True'):
+            self.was_localized = True
+            self._event('Planisferio localized on the loaded map')
+            self._set(MAPPING_DONE, 'Map loaded and localized. S improves the map '
+                      '(stage 2), K skips to the route (stage 3).')
+
+    # =====================================================================
+    # stage 1: exploring
+    # =====================================================================
     def _start_exploring(self, how):
         """Release the robot: Sendero first, then Frontera."""
         self.p.send_navigation('RESUME')
         self.p.send_explorer('START')
         self._op = {'sent_at': self.p.now(), 'retries': 0, 'acked': False}
         self.end_class = ''
-        self._set(EXPLORING, 'Exploring: Frontera picks frontiers, Sendero drives.')
+        self._set(EXPLORING, 'Stage 1: exploring. Frontera picks frontiers, Sendero drives.')
         self._event('Exploration ' + ('started' if how == 'START' else 'resumed'))
 
     def _tick_exploring(self, now):
@@ -452,7 +493,7 @@ class MissionCore:
         op = self._op
         if status in EXPLORATION_END or status.startswith('ERROR'):
             self._event(f'Frontera finished: {status}')
-            self._begin_finish(status)
+            self._begin_finish(status, 'mapping')
             return
         if status in ('WAITING_FOR_START', 'PAUSED') and not op.get('acked'):
             if now - op['sent_at'] > self.s.start_ack_timeout_s:
@@ -466,19 +507,21 @@ class MissionCore:
                 self._event(f'START repeated ({op["retries"]})')
         elif status:
             op['acked'] = True
-        self.detail = f'Exploring (Frontera: {status or "no status"}).'
+        self.detail = f'Stage 1: exploring (Frontera: {status or "no status"}).'
 
     def _tick_paused(self, now):
         status, _ = self.p.explorer_status()
         if status in EXPLORATION_END or status.startswith('ERROR'):
-            self._begin_finish(status)
+            self._begin_finish(status, 'mapping')
 
-    # ── finishing ────────────────────────────────────────────────────────
-    def _begin_finish(self, end_class):
-        """End exploration, optimize the pose graph and save the map."""
+    # =====================================================================
+    # finishing stage 1 or 2: optimize, save the map, save a mission folder
+    # =====================================================================
+    def _begin_finish(self, end_class, stage):
         self.end_class = end_class
-        self._op = {'phase': 'halt', 't0': self.p.now()}
-        self._set(FINISHING, f'Mapping finished ({end_class}): optimizing the map...')
+        self._op = {'phase': 'halt', 't0': self.p.now(), 'stage': stage}
+        what = 'Mapping' if stage == 'mapping' else 'Map tour'
+        self._set(FINISHING, f'{what} finished ({end_class}): optimizing the map...')
 
     def _tick_finishing(self, now):
         op = self._op
@@ -507,30 +550,142 @@ class MissionCore:
                 op['phase'] = 'save'
             return
         if op['phase'] == 'save':
-            self.detail = f'Mapping finished ({self.end_class}): saving the map...'
-            self._request_save('end of mapping', force=True)
+            self.detail = 'Saving the map...'
+            self._request_save(f'end of {op["stage"]}', force=True)
             op['phase'] = 'saving'
             return
         if op['phase'] == 'saving' and self._save is None:
             m = self.last_map or {}
+            stage = op['stage']
+            saved = ''
             if m.get('ok'):
                 ok, info, folder = self.p.save_mission(m.get('raw', ''))
                 self._event(('Mission folder saved: ' if ok else 'Mission folder NOT saved: ')
                             + info)
                 if ok:
                     self.mission_folder = folder
-                nxt = ('Press R for restocking.' if self.mission == 'full' else
-                       'Start Phase 2 with mission:=restocking.')
-                text = (f'EXPLORATION DONE ({self.end_class}). Map saved: '
-                        f'{m.get("message", "")}. {nxt}')
+                saved = f'Map saved: {m.get("message", "")}.'
             else:
-                text = (f'EXPLORATION DONE ({self.end_class}). Map NOT saved '
-                        f'({m.get("message", "?")}); press M to retry. '
-                        'R starts restocking.')
-            self._set(MAPPING_DONE, text)
-            self._event(f'Mapping phase complete: {self.end_class}')
+                saved = f'Map NOT saved ({m.get("message", "?")}).'
+            self.done_stages.add(stage)
+            if stage == 'mapping':
+                self._set(MAPPING_DONE, f'STAGE 1 DONE ({self.end_class}). {saved} '
+                          'S improves the map (stage 2), K skips to the route (stage 3).')
+            else:
+                self._set(QUALITY_DONE, f'STAGE 2 DONE ({self.end_class}). {saved} '
+                          'S plans the restocking route (stage 3).')
+            self._event(f'Stage {"1" if stage == "mapping" else "2"} complete: '
+                        f'{self.end_class}')
 
-    # ── reset ────────────────────────────────────────────────────────────
+    # =====================================================================
+    # stage 2: map quality
+    # =====================================================================
+    def _begin_quality(self):
+        if not self.mission_folder:
+            self._event('rejected: no mission folder saved yet (M saves the map first)')
+            return
+        self._retire_explorer()
+        self.started_stages.add('quality')
+        self._begin_stage_steps(self._stage_steps('quality'), self._start_tour,
+                                'Stage 2: starting the camera, ArUco, logo detector and '
+                                'landmark mapper (Frontera closed)...')
+        self._event('Stage 2: map quality')
+
+    def _start_tour(self):
+        self.p.send_navigation('RESUME')
+        self.tour = self.p.make_tour()
+        grid = self.p.load_grid(self.mission_folder)
+        if grid is None:
+            self._error(f'cannot read the map in {self.mission_folder}')
+            return
+        self.tour.start(grid)
+        self._set(QUALITY, 'Stage 2: map tour started.')
+
+    def _tick_quality(self, now):
+        t = self.tour
+        t.tick()
+        if t.done:
+            self._begin_finish(f'TOUR: {t.outcome}', 'quality')
+            return
+        self.detail = 'Stage 2: ' + (t.detail or 'map tour')
+
+    # =====================================================================
+    # stage 3: the restocking route
+    # =====================================================================
+    def _begin_planning(self):
+        self._halt(explorer='STOP', navigation='CANCEL')
+        self._retire_explorer()
+        self._op = {'handle': self.p.plan_route(self.mission_folder), 't0': self.p.now()}
+        self._set(PLANNING, 'Stage 3: planning the restocking route on the final map...')
+
+    def _tick_planning(self, now):
+        op = self._op
+        h = op['handle']
+        if h is not None and not h.done() and now - op['t0'] < self.s.plan_timeout_s:
+            return
+        ok, msg = h.result() if (h is not None and h.done()) else (False, 'timed out')
+        if not ok:
+            self._error(f'route planning failed: {msg}')
+            return
+        self.route_info = msg
+        self.done_stages.add('route')
+        self._event(f'Stage 3 complete: {msg}')
+        self._set(ROUTE_READY, f'STAGE 3 DONE. Route: {msg}. S starts restocking (stage 4).')
+
+    # =====================================================================
+    # stage 4: restocking
+    # =====================================================================
+    def _begin_restocking(self):
+        self._retire_explorer()
+        steps = []
+        if 'quality' not in self.started_stages:       # stage 2 skipped: camera now
+            self.started_stages.add('quality')
+            steps += self._stage_steps('quality')
+        self.started_stages.add('restocking')
+        steps += self._stage_steps('restocking')
+        self._begin_stage_steps(steps, self._start_restock,
+                                'Stage 4: starting the EKF, box detectors, QR reader and '
+                                'forklift...')
+        self._event('Stage 4: restocking')
+
+    def _start_restock(self):
+        h = self.p.call_service('slam_localization_only')
+        self._event('Planisferio: localization only (the map no longer changes)' if h
+                    else 'WARNING: Planisferio has no localization_only service; it keeps '
+                    'mapping')
+        self.p.send_navigation('RESUME')
+        self.restock = self.p.make_restock('full', self.mission_folder)
+        self.restock.start()
+        self._set(RESTOCKING, 'Stage 4: restocking...')
+
+    def _tick_restocking(self, now):
+        r = self.restock
+        r.tick()
+        if r.done:
+            self.done_stages.add('restocking')
+            self._set(RESTOCK_DONE, f'STAGE 4 DONE: {r.outcome}. X closes everything.')
+            self.p.zero_velocity()
+            return
+        if r.error:
+            self._halt(explorer='PAUSE', navigation='CANCEL')
+            self._set(RESTOCK_PAUSED, f'{r.error} — S retries, X stops.')
+            return
+        self.detail = f'Stage 4 [{r.state} / {r.phase}]: {r.detail}'
+
+    def _retire_explorer(self):
+        """Close Frontera for good (stages 2-4 do not explore)."""
+        explorers = [s for s in self.all_steps if s.role == 'explorer' and not s.external
+                     and s.name not in self.retired]
+        if not explorers:
+            return
+        self._halt(explorer='STOP', navigation='CANCEL')
+        self.retired |= {s.name for s in explorers}
+        self.p.stop_steps(explorers)
+        self._event('Frontera closed (no more exploring)')
+
+    # =====================================================================
+    # reset (stage 1)
+    # =====================================================================
     def _begin_reset(self):
         """New mapping run without closing SLAM, odometry or Sendero."""
         self._op = {'phase': 'halt', 't0': self.p.now()}
@@ -559,13 +714,18 @@ class MissionCore:
                 ok, msg = h.result() if (h is not None and h.done()) else (False, 'no answer')
                 self._event('SLAM map cleared' if ok else f'SLAM reset failed: {msg}')
                 self.end_class = ''
+                self.done_stages.discard('mapping')
                 self._begin_bringup('Reset: restarting Frontera and checking every script')
 
-    # ── stop ─────────────────────────────────────────────────────────────
+    # =====================================================================
+    # stop
+    # =====================================================================
     def _begin_stop(self, why):
         """Halt the robot, save the map, close every script."""
         if self.restock is not None:
             self.restock.abort(f'X ({why})')
+        if self.tour is not None and not self.tour.done:
+            self.tour.pause()
         self._op = {'phase': 'halt', 't0': self.p.now(), 'why': why}
         self._set(STOPPING, 'Stopping: the robot is halting...')
 
@@ -573,8 +733,9 @@ class MissionCore:
         op = self._op
         if op['phase'] == 'halt':
             self._halt(explorer='STOP', navigation='CANCEL')
+            map_changing = 'restocking' not in self.started_stages
             if (self.s.save_map_on_stop and self._slam_alive() and self._save is None
-                    and not self._restocking_run()):
+                    and map_changing):
                 self._request_save('stop', force=True)
                 op['phase'] = 'saving'
                 self.detail = 'Stopping: saving the map...'
@@ -587,7 +748,7 @@ class MissionCore:
                 op['phase'] = 'kill'
             return
         if op['phase'] == 'kill':
-            launched = [s for s in self.steps + self.phase2_steps if not s.external]
+            launched = [s for s in self.all_steps if not s.external]
             op['job'] = self.p.stop_steps(list(reversed(launched)))
             op['phase'], op['t0'] = 'killing', now
             self.detail = 'Stopping: closing every script...'
@@ -604,13 +765,17 @@ class MissionCore:
                               'Press S to bring the system up again.')
                 self._event('All scripts closed.')
 
-    # ── errors ───────────────────────────────────────────────────────────
+    # =====================================================================
+    # errors
+    # =====================================================================
     def _error(self, reason):
-        """Bring-up failure: halt and wait for the operator."""
+        """Halt and wait for the operator."""
         if self.restock is not None and not self.restock.done:
             self.restock.pause()
+        if self.tour is not None and not self.tour.done:
+            self.tour.pause()
         self._halt(explorer='PAUSE', navigation='CANCEL')
-        self._set(ERROR, f'{reason} — S retries, N resets, X stops.')
+        self._set(ERROR, f'{reason} — S retries, X stops.')
         self._event('ERROR: ' + reason)
 
     def _fault(self, reason):
@@ -619,7 +784,7 @@ class MissionCore:
 
     def _check_health(self):
         """A critical script that died halts the robot."""
-        for step in self._run_steps():
+        for step in self.steps:
             if step.external or not step.critical:
                 continue
             if self.p.was_launched(step) and not self.p.alive(step):
@@ -685,18 +850,44 @@ class MissionCore:
         self.events.append((time.strftime('%H:%M:%S'), text))
         self.p.log(text)
 
+    def stage_progress(self):
+        """[(stage, title, 'done' | 'skipped' | 'active' | 'todo')] for the monitor."""
+        active = {EXPLORING: 'mapping', PAUSED: 'mapping', READY: 'mapping',
+                  QUALITY: 'quality', QUALITY_PAUSED: 'quality', PLANNING: 'route',
+                  RESTOCKING: 'restocking', RESTOCK_PAUSED: 'restocking'}.get(self.state)
+        if self.state == FINISHING:
+            active = self._op.get('stage')
+        if self.state == STAGE_BRINGUP:
+            active = 'restocking' if 'restocking' in self.started_stages else 'quality'
+        out = []
+        for stage, title in STAGE_TITLES:
+            if stage in self.done_stages:
+                mark = 'done'
+            elif stage in self.skipped_stages:
+                mark = 'skipped'
+            elif stage == active:
+                mark = 'active'
+            else:
+                mark = 'todo'
+            out.append((stage, title, mark))
+        return out
+
     def snapshot(self):
         """Everything the status topic needs."""
         now = self.p.now()
         return {
             'mode': self.mode,
-            'mission': self.mission,
+            'stages': self.stage_progress(),
+            'loaded_map': self.loaded_map,
             'mission_folder': self.mission_folder,
+            'route': self.route_info,
+            'tour': self.tour.snapshot() if self.tour is not None else None,
             'restock': self.restock.snapshot() if self.restock is not None else None,
             'state': self.state,
             'detail': self.detail,
             'allowed': self.allowed(),
             'start_meaning': START_MEANING.get(self.state, ''),
+            'skip_meaning': SKIP_MEANING.get(self.state, ''),
             'state_age_s': round(now - self.state_since, 1),
             'uptime_s': round(now - self.started_at, 1),
             'end_class': self.end_class,

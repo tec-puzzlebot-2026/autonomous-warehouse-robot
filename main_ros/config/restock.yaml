@@ -2,12 +2,26 @@
 # restock.yaml — Phase 2 (restocking) settings
 # =============================================================================
 # Read by the Program Manager (not a ROS parameter file):
+#   map_quality   -> restock/map_tour.py (stage 2: the tour round the map)
 #   restock       -> restock/restock_core.py (RestockSettings): distances, timeouts
 #   localization  -> which ArUco IDs the EKF may use (saved into ekf_landmarks.yaml)
 #   ports         -> restock/restock_ports.py: topics, our own short drives
 # Nothing about the arena is here: markers, logos and docks are measured while
 # mapping and saved in the mission folder.
 # =============================================================================
+
+map_quality:                 # stage 2 (optional): improve the map, find markers and logos
+  profile: transport         # Sendero profile of the tour
+  dwell_s: 1.5               # stand still at every viewpoint (the landmark mapper only
+                             # uses sightings taken while the robot is still)
+  passes: 1                  # times round the whole map (2 = more loop closures, slower)
+  return_to_start: true      # every pass ends where it began: Planisferio closes the loop
+  nav_timeout_s: 120.0
+  route:                     # viewpoints along every edge (restock/route.py RouteConfig)
+    view_range: 2.0          # m, the camera sees markers farther than the box detector
+    standoff_min: 0.40
+    standoff_max: 0.90
+    fov: 60.0
 
 restock:
   companies: [soriene, emezon, walnut]   # QR texts and logo classes (logo model order)

@@ -9,10 +9,9 @@
 #   {maps_dir}      where SLAM saves maps (per mode, below)
 #   {log_dir}       this run's log folder
 #   {mode}          sim | real
-#   {mission}       mapping | restocking | full
-#   {mission_dir}   the mission folder (restocking: the one loaded; full: the one
-#                   saved at the end of mapping; filled in when the step starts)
-#   {slam_args}     restocking: Planisferio loads the session, localization only
+#   {mission_dir}   the newest mission folder (saved at the end of stage 1 or 2, or
+#                   the one given with map:=); filled in when the step starts
+#   {slam_args}     map:= runs: Planisferio loads that map's session
 #   {models_dir}    main_ros/main_ros/vision/models (the source folder, found from the
 #                   installed package; set models_dir under a mode to use another one)
 #   + every key under modes.<mode>.placeholders (topics, model files: a bare file
@@ -26,9 +25,6 @@
 #   service: /name    a service exists
 #   node:    /name    a node exists
 #
-# "phase" of a step: both (default), mapping (Phase 1 only: Frontera) or
-# restocking (Phase 2 only). mission:=restocking brings up both + restocking;
-# mission:=full brings up both + mapping, and the restocking steps when R is pressed.
 # =============================================================================
 
 modes:
@@ -86,6 +82,7 @@ services:                   # std_srvs/Trigger of SLAM v2
   slam_reset: /slam/reset
   slam_optimize: /slam/optimize
   slam_save: /slam/save_map
+  slam_localization_only: /slam/localization_only   # stage 4: the map no longer changes
 
 mission:
   start_ack_timeout_s: 5.0      # Frontera must leave WAITING after START
@@ -111,6 +108,8 @@ stale_process_patterns:
   - 'lib/main_ros/(scan_filter|landmark_mapper|logo_detector|box_target|qr_reader|aruco_detector|forklift_placeholder|encoder_bridge|ekf_localization)( |$)'
   - 'ekf_localization\.launch\.py'
   - 'robot_description\.launch\.py'
+  - 'vision\.launch\.py'
+  - 'lib/main_ros/(camera_node|image_processing)( |$)'
   - 'jetson_bringup_script'
   - 'lib/sllidar_ros2/sllidar_node( |$)'
   - 'lib/main_ros/differential_drive( |$)'
@@ -124,7 +123,10 @@ stale_process_patterns:
 #   role: explorer   -> restarted by RESET (Frontera's STOP is final)
 #   todo: true       -> not configured yet; bring-up stops here with the hint
 #   with_previous    -> started together with the step above (parallel start)
-#   group: vision    -> left out with vision:=false
+#   stage            -> core (default: started at bring-up, runs the whole time)
+#                       mapping    stage 1 only (Frontera; closed after stage 1)
+#                       quality    from stage 2 on (camera, ArUco, logos, landmark mapper)
+#                       restocking stage 4 (EKF, box detectors, QR, forklift)
 # =============================================================================
 steps:
 
@@ -198,7 +200,7 @@ steps:
   - name: frontera
     with_previous: true
     role: explorer
-    phase: mapping
+    stage: mapping
     cmd: "ros2 run frontera exploration_manager --ros-args --params-file {config_dir}/frontera_puzzlebot.yaml -p use_sim_time:={use_sim_time} -p cmd_vel_topic:={cmd_vel_in}"
     ready:
       - message: /exploration/status
@@ -207,7 +209,7 @@ steps:
   # ── camera, ArUco and the landmark mapper (both phases) ──────────────────
   # Real robot: Pi camera + rectification (/camera/image_raw, /camera/image_rect).
   - name: camera
-    group: vision
+    stage: quality
     modes: [real]
     critical: false
     cmd: "ros2 launch main_ros vision.launch.py"
@@ -216,7 +218,7 @@ steps:
     timeout_s: 40
 
   - name: aruco_detector
-    group: vision
+    stage: quality
     critical: false
     cmd: "ros2 run main_ros aruco_detector --ros-args --params-file {config_dir}/aruco_localization.yaml -p image_topic:={image_topic} -p use_sim_time:={use_sim_time}"
     ready:
@@ -225,7 +227,7 @@ steps:
     hint: "Check /camera/image_raw and /camera/camera_info."
 
   - name: logo_detector
-    group: vision
+    stage: quality
     critical: false
     cmd: "ros2 run main_ros logo_detector --ros-args -p model:={logo_model} -p image_topic:={image_topic} -p max_rate_hz:=2.0 -p use_sim_time:={use_sim_time}"
     ready:
@@ -235,7 +237,7 @@ steps:
 
   # Puts every ArUco and logo the camera sees on the SLAM map (saved after mapping).
   - name: landmark_mapper
-    group: vision
+    stage: quality
     critical: false
     cmd: "ros2 run main_ros landmark_mapper --ros-args -p aruco_config:={config_dir}/aruco_localization.yaml -p use_sim_time:={use_sim_time}"
     ready:
@@ -246,7 +248,7 @@ steps:
   # Isaac Sim gives /joint_states; Chris's EKF reads the real robot's encoder topics.
   - name: encoder_bridge
     modes: [sim]
-    phase: restocking
+    stage: restocking
     cmd: "ros2 run main_ros encoder_bridge --ros-args -p use_sim_time:={use_sim_time}"
     ready:
       - message: /VelocityEncR
@@ -254,7 +256,7 @@ steps:
 
   # The EKF on the markers measured while mapping (ekf_landmarks.yaml of the mission folder).
   - name: ekf
-    phase: restocking
+    stage: restocking
     critical: false
     cmd: "ros2 launch main_ros ekf_localization.launch.py start_aruco:=false map:={mission_dir}/ekf_landmarks.yaml"
     ready:
@@ -263,21 +265,21 @@ steps:
     hint: "No ekf_landmarks.yaml means no ArUco was found while mapping; Planisferio then needs a pose from Foxglove (2D Pose Estimate)."
 
   - name: box_far
-    phase: restocking
+    stage: restocking
     cmd: "ros2 run main_ros box_target --ros-args -r __node:=box_far -p model:={box_far_model} -p settings:={config_dir}/box_far.yaml -p enabled:=false -p max_rate_hz:=5.0 -p image_topic:={image_topic} -p use_sim_time:={use_sim_time}"
     ready:
       - node: /box_far
     timeout_s: 60
 
   - name: box_target
-    phase: restocking
+    stage: restocking
     cmd: "ros2 run main_ros box_target --ros-args -p model:={box_near_model} -p enabled:=false -p image_topic:={image_topic} -p use_sim_time:={use_sim_time}"
     ready:
       - node: /box_target
     timeout_s: 60
 
   - name: qr_reader
-    phase: restocking
+    stage: restocking
     cmd: "ros2 run main_ros qr_reader --ros-args -p image_topic:={image_topic} -p use_sim_time:={use_sim_time}"
     ready:
       - node: /qr_reader
@@ -286,7 +288,7 @@ steps:
   # The forklift teammate's PickBox / SetDownBox server. Until it exists, the
   # placeholder answers after a few seconds (failures can be injected to test).
   - name: forklift
-    phase: restocking
+    stage: restocking
     cmd: "ros2 run main_ros forklift_placeholder --ros-args -p use_sim_time:={use_sim_time}"
     ready:
       - action: /forklift/pick_box

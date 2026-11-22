@@ -1,21 +1,21 @@
 """main.launch.py — the Team Zero warehouse robot (robot / simulation side).
 
 Starts only the Program Manager. The Program Manager starts every other
-script itself (odometry, SLAM, Sendero, Frontera, drivers on the real robot),
-waits until each is ready, and runs the mission. Nothing moves until the
-operator sends S twice: the first S brings the system up, the second starts
-exploring.
+script itself, stage by stage, waits until each is ready, and runs the mission.
+Nothing moves until the operator sends S twice: the first S brings the system
+up, the second starts mapping.
 
     ros2 launch main_ros main.launch.py                 # simulation (Isaac Sim)
     ros2 launch main_ros main.launch.py mode:=real      # the robot (Jetson)
     ros2 launch main_ros main.launch.py autostart:=true # bring up right away
 
-Missions:
-    mission:=mapping      Phase 1: explore, map, find the ArUco markers, logos and docks;
-                          the end of mapping saves a mission folder (default)
-    mission:=restocking   Phase 2 on the latest mission folder (or map:=<folder>)
-    mission:=full         Phase 1, then R in the monitor starts Phase 2 on the new map
-    vision:=false         leave out the camera steps (map only: no markers or docks)
+One run, four stages; after each one the monitor waits for a key (S next, K skip):
+    1 mapping      Frontera explores, Planisferio maps (no camera: light)
+    2 map quality  optional: the robot drives round the map with the camera on, closes
+                   loops and places the ArUco markers and logos on the map
+    3 route        the restocking patrol route on the final map
+    4 restocking   boxes to the docks
+    map:=latest | <mission folder>   start from a saved map: stage 1 is skipped
 
 The monitor is opened on the host PC by host.launch.py.
 Ctrl+C here halts the robot and closes every script. X in the monitor does
@@ -44,8 +44,6 @@ def generate_launch_description():
             'mode': LaunchConfiguration('mode'),
             'config_file': LaunchConfiguration('config_file'),
             'autostart': ParameterValue(LaunchConfiguration('autostart'), value_type=bool),
-            'mission': LaunchConfiguration('mission'),
-            'vision': ParameterValue(LaunchConfiguration('vision'), value_type=bool),
             'map': ParameterValue(LaunchConfiguration('map'), value_type=str),
         }],
         # Give the Program Manager time to halt the robot and close every
@@ -60,15 +58,9 @@ def generate_launch_description():
                               description='program_manager.yaml (default: main_ros/config)'),
         DeclareLaunchArgument('autostart', default_value='false',
                               description='true = bring the system up without waiting for S'),
-        DeclareLaunchArgument('vision', default_value='true',
-                              description='false = no camera, ArUco, logos or landmark mapper '
-                                          '(lighter: only the map)'),
-        DeclareLaunchArgument('mission', default_value='mapping',
-                              choices=['mapping', 'restocking', 'full'],
-                              description='mapping (Phase 1), restocking (Phase 2) or full'),
         DeclareLaunchArgument('map', default_value='',
-                              description='restocking: mission folder name or path '
-                                          '(default: <maps_dir>/missions/latest)'),
+                              description='start from a saved map: latest, or a mission '
+                                          'folder name or path in <maps_dir>/missions'),
         manager,
         # The Program Manager closed (after X, or it crashed): end the launch.
         RegisterEventHandler(OnProcessExit(

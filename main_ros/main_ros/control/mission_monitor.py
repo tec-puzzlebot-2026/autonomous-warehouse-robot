@@ -10,12 +10,13 @@ string at 2 Hz that the Program Manager assembles from its own state and the
 SLAM, Frontera and Sendero reports), and publishes key presses on
 /mission/command. No map, scan or TF crosses the network for it.
 
-Keys
-    S  start: bring the system up / start exploring / resume
+Keys (one run, four stages: 1 map, 2 map quality, 3 route, 4 restocking;
+after each stage the robot stops and waits for S)
+    S  start: bring up / start mapping / next stage / resume
     P  pause (the robot holds)
-    F  finish mapping now (optimize + save the map)
+    F  finish the stage now: mapping or the map tour (optimize + save the map)
+    K  skip stage 2 (map quality): straight to the route
     M  save the map
-    R  start restocking (mission:=full, after mapping)
     N  reset: new mapping run (press twice: it clears the map)
     X  stop: halt and close every script (press twice); then the Program
        Manager, this monitor and the host side close by themselves
@@ -46,14 +47,16 @@ WIDTH = 80                      # box width (the terminal needs 82 columns)
 KEYS = [  # (key, command, label)
     ('S', 'START', 'start'),
     ('P', 'PAUSE', 'pause'),
-    ('F', 'FINISH', 'finish mapping'),
+    ('F', 'FINISH', 'finish'),
+    ('K', 'SKIP', 'skip'),
     ('M', 'SAVE_MAP', 'save map'),
-    ('R', 'RESTOCK', 'restocking'),
     ('N', 'RESET', 'reset'),
     ('X', 'STOP', 'stop'),
 ]
 NEEDS_CONFIRM = ('N', 'X')
-KEYS_SHORT = {'S': 'start', 'F': 'finish', 'M': 'save', 'R': 'restock'}
+KEYS_SHORT = {'S': 'start', 'F': 'finish', 'M': 'save', 'K': 'skip'}
+STAGE_MARK = {'done': '✓', 'skipped': '–', 'active': '▶', 'todo': '·'}
+MAX_NODE_ROWS = 9               # the window stays 84 x 41 in every stage
 AREA_WINDOW_S = 60.0            # map growth is measured over this window
 
 
@@ -147,6 +150,23 @@ def age_word(age, fresh=3.0):
     return f'stale {a:.0f} s', 'amber'
 
 
+def tour_rows(t, C):
+    """Rows of the stage-2 map tour (5)."""
+    text, green, amber, bold = C['text'], C['green'], C['amber'], C['bold']
+    cov = t.get('coverage')
+    marks = t.get('markers') or []
+    logos = t.get('logos') or []
+    return [
+        ('goal', f'{t.get("goal", 0)}/{t.get("goals", 0)}'
+                 + (' · paused' if t.get('paused') else ''), bold),
+        ('skipped', t.get('skipped', 0), amber if t.get('skipped') else green),
+        ('edges', f'{100 * cov:.0f} % · {t.get("length_m", 0)} m' if cov is not None else '–',
+         text),
+        ('ArUco', ', '.join(str(m) for m in marks) or 'none yet', green if marks else amber),
+        ('logos', ', '.join(str(lg) for lg in logos) or 'none yet', green if logos else amber),
+    ]
+
+
 def restock_rows(rs, C):
     """Rows of the restocking section (5) and of the boxes section (5)."""
     text, green, amber, red, bold = C['text'], C['green'], C['amber'], C['red'], C['bold']
@@ -220,8 +240,10 @@ def draw(scr, node):
         'IDLE': dim, 'BRINGUP': amber, 'READY': cyan, 'EXPLORING': green,
         'PAUSED': amber, 'FINISHING': amber, 'MAPPING_DONE': green,
         'RESTOCKING': cyan, 'RESETTING': amber, 'STOPPING': amber,
-        'STOPPED': dim, 'ERROR': red, 'PHASE2_BRINGUP': amber, 'RESTOCK_PAUSED': amber,
-        'RESTOCK_DONE': green}
+        'STOPPED': dim, 'ERROR': red, 'STAGE_BRINGUP': amber, 'RESTOCK_PAUSED': amber,
+        'RESTOCK_DONE': green, 'LOCALIZING': amber, 'QUALITY': green,
+        'QUALITY_PAUSED': amber, 'QUALITY_DONE': green, 'PLANNING': amber,
+        'ROUTE_READY': green}
     L, W = 1, WIDTH
     M = L + W // 2
     CW = W - 4                       # usable width inside the box
@@ -297,6 +319,12 @@ def draw(scr, node):
             else:
                 word, attr = 'off', dim
             nodes.append((f'Node {i}', s.get('name', '')[:17], word, attr))
+        if len(nodes) > MAX_NODE_ROWS:       # stage 4 runs many scripts: problems first
+            bad = [n for n in nodes if n[3] is not green]
+            good = [n for n in nodes if n[3] is green]
+            keep = (bad + good)[:MAX_NODE_ROWS - 1]
+            rest = len(nodes) - len(keep)
+            nodes = keep + [('', f'+ {rest} more', 'running', green)]
         n_split = max(len(conn), len(nodes))
         need_h = 31 + n_split
 
@@ -347,10 +375,15 @@ def draw(scr, node):
         y += 1
         sides(y)
         rs = st.get('restock') or None
-        mission = st.get('mission', 'mapping')
-        title = ('Team Zero · Phase 2 Restocking' if (rs or mission == 'restocking')
-                 else 'Team Zero · Phase 1 Mapping')
-        put(scr, y, L + 2, title, bold)
+        tour = st.get('tour') or None
+        if tour and tour.get('done') and not rs:
+            tour = tour if st.get('state') in ('FINISHING', 'QUALITY_DONE') else None
+        put(scr, y, L + 2, 'Team Zero', bold)
+        x = L + 13
+        for _stage, title, mark in st.get('stages') or []:
+            attr = {'done': green, 'active': cyan, 'skipped': dim}.get(mark, dim)
+            put(scr, y, x, f'{STAGE_MARK.get(mark, "·")} {title}', attr)
+            x += len(title) + 4
         up = int(st.get('uptime_s', 0) or 0)
         run = (f'{mode.upper()} · run {up // 3600:d}:{up % 3600 // 60:02d}:{up % 60:02d}'
                if up >= 3600 else f'{mode.upper()} · run {up // 60:02d}:{up % 60:02d}')
@@ -393,6 +426,8 @@ def draw(scr, node):
         else:
             meaning = st.get('start_meaning', '')
             msg = f'Press S to {meaning}' if meaning and 'START' in allowed else ''
+            if st.get('skip_meaning') and 'SKIP' in allowed:
+                msg += f' · K to {st["skip_meaning"]}'
             if not msg and state == 'EXPLORING':
                 msg = 'Exploring · P pause · F finish mapping'
             attr = cyan
@@ -416,7 +451,8 @@ def draw(scr, node):
             y += 1
 
         # ── exploration (Phase 1) or restocking (Phase 2) | navigation ─
-        section(y, 'restocking' if rs else 'exploration', mid_title='navigation')
+        section(y, 'restocking' if rs else ('map tour' if tour else 'exploration'),
+                mid_title='navigation')
         y += 1
         ex_status = ex.get('status') or '–'
         nav_status = nav.get('status') or '–'
@@ -441,6 +477,11 @@ def draw(scr, node):
             ('safety', f'{safety} · {fnum(nav.get("closest_obstacle_m"))} m',
              green if safety == 'CLEAR' else (dim if safety == '–' else amber)),
         ]
+        if tour and not rs:
+            ex_rows = tour_rows(tour, C)
+            nav_rows[2] = ('profile', nav.get('profile', '–'), text)
+            nav_rows[3] = ('remaining', f'{fnum(nav.get("distance_remaining"), "{:.2f}")} m · '
+                                        f'{nav.get("task", "–")}', text)
         if rs:
             ex_rows, map_rows_r = restock_rows(rs, C)
             nav_rows[2] = ('profile', nav.get('profile', '–'), text)

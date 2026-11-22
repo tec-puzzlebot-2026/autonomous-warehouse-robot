@@ -658,6 +658,15 @@ class RestockCore:
     # PLAN_ROUTE / PATROL / RESUME
     # =====================================================================
     def _enter_PLAN_ROUTE(self):
+        saved = ms.read_yaml(os.path.join(self.folder, ms.ROUTE), None) or {}
+        if saved.get('viewpoints'):                 # planned in stage 3: use it as it is
+            self.route = [tuple(float(v) for v in p) for p in saved['viewpoints']]
+            self.route_info = saved
+            self.idx = 0
+            self._event(f'route from stage 3: {len(self.route)} viewpoints, '
+                        f'{saved.get("length_m", 0):.1f} m')
+            self._goto('PATROL_GO')
+            return
         self.detail = 'Planning the inspection route...'
         start = self.p.slam_pose() or (0.0, 0.0, 0.0)
         r = plan_route(self.world.grid, start, self.route_cfg)
