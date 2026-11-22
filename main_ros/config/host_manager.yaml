@@ -14,10 +14,10 @@ robot:
     setup: "source /opt/ros/jazzy/setup.bash && source /ws/install/setup.bash"
     foxglove: ws://100.67.81.84:8765
   real:                           # the Jetson on the robot
-    ssh: puzzlebot@10.156.217.129
+    ssh: puzzlebot@jetson.local   # mDNS name: works whichever phone the Jetson is on
     container: ""
     setup: "source /opt/ros/humble/setup.bash && source ~/te3003b_ws/install/setup.bash"
-    foxglove: ws://10.156.217.129:8765
+    foxglove: ws://jetson.local:8765
 
 exit_with_monitor: true           # monitor window closed (after X, or Q) -> close everything here
 
