@@ -133,6 +133,10 @@ class Step:
         hint: Extra text for the operator when it does not become ready.
         phase: 'both' (default), 'mapping' (Phase 1 only) or 'restocking'
             (Phase 2 only: in mission:=full it starts when R is pressed).
+        with_previous: True = started together with the step before it instead
+            of after it is ready (steps that do not need each other start in
+            parallel); its readiness is still checked in order.
+        group: '' or a name ('vision') the operator can leave out at launch.
     """
     name: str
     cmd: str = ''
@@ -142,6 +146,8 @@ class Step:
     role: str = ''
     hint: str = ''
     phase: str = 'both'
+    with_previous: bool = False
+    group: str = ''
 
     @property
     def external(self):
@@ -392,6 +398,15 @@ class MissionCore:
                     self._step_failed(step, f'cannot start {step.name}: {msg}')
                     return
                 self._event(f'started {step.name}')
+                # Start the steps that go together with this one right away.
+                j = op['i'] + 1
+                while j < len(steps) and steps[j].with_previous:
+                    nxt = steps[j]
+                    if not nxt.external and not self.p.alive(nxt):
+                        ok, msg = self.p.launch(nxt)
+                        if ok:
+                            self._event(f'started {nxt.name} (in parallel)')
+                    j += 1
             op['phase'], op['t0'] = 'wait', now
             self.detail = f'{step.name}: waiting for {describe_checks(step.ready)}'
             return

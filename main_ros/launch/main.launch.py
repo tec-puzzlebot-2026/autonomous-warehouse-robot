@@ -15,6 +15,7 @@ Missions:
                           the end of mapping saves a mission folder (default)
     mission:=restocking   Phase 2 on the latest mission folder (or map:=<folder>)
     mission:=full         Phase 1, then R in the monitor starts Phase 2 on the new map
+    vision:=false         leave out the camera steps (map only: no markers or docks)
 
 The monitor is opened on the host PC by host.launch.py.
 Ctrl+C here halts the robot and closes every script. X in the monitor does
@@ -44,6 +45,7 @@ def generate_launch_description():
             'config_file': LaunchConfiguration('config_file'),
             'autostart': ParameterValue(LaunchConfiguration('autostart'), value_type=bool),
             'mission': LaunchConfiguration('mission'),
+            'vision': ParameterValue(LaunchConfiguration('vision'), value_type=bool),
             'map': ParameterValue(LaunchConfiguration('map'), value_type=str),
         }],
         # Give the Program Manager time to halt the robot and close every
@@ -58,6 +60,9 @@ def generate_launch_description():
                               description='program_manager.yaml (default: main_ros/config)'),
         DeclareLaunchArgument('autostart', default_value='false',
                               description='true = bring the system up without waiting for S'),
+        DeclareLaunchArgument('vision', default_value='true',
+                              description='false = no camera, ArUco, logos or landmark mapper '
+                                          '(lighter: only the map)'),
         DeclareLaunchArgument('mission', default_value='mapping',
                               choices=['mapping', 'restocking', 'full'],
                               description='mapping (Phase 1), restocking (Phase 2) or full'),

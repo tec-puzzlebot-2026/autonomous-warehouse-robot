@@ -54,7 +54,7 @@ modes:
       scan_raw: /laser_scan                 # RPLidar (sllidar_ros2, started by robot_bringup)
       cmd_vel_in: /cmd_vel_in               # through the velocity relay (limits, timeout)
       # Hackerboard encoders (rad/s); wheel radius and track from the board config
-      odom_args: "-p input:=encoders -p wheel_radius:=0.0505 -p wheel_separation:=0.183"
+      odom_args: "-p input:=encoders -p wheel_radius:=0.0505 -p wheel_separation:=0.183 -p publish_rate_hz:=20.0"
       image_topic: /camera/image_rect       # color-corrected: what the models were trained on
       # TensorRT FP16 engines built on the Jetson from the .onnx files (same folder).
       logo_model: logos_yolo11n.engine
@@ -123,6 +123,8 @@ stale_process_patterns:
 #   role: slam       -> the map services belong to it
 #   role: explorer   -> restarted by RESET (Frontera's STOP is final)
 #   todo: true       -> not configured yet; bring-up stops here with the hint
+#   with_previous    -> started together with the step above (parallel start)
+#   group: vision    -> left out with vision:=false
 # =============================================================================
 steps:
 
@@ -161,6 +163,7 @@ steps:
     hint: "Install robot_state_publisher in the image: ros-jazzy-robot-state-publisher (real robot: ros-humble-robot-state-publisher)."
 
   - name: wheel_odometry
+    with_previous: true
     cmd: "ros2 run main_ros wheel_odometry --ros-args -p use_sim_time:={use_sim_time} {odom_args}"
     ready:
       - message: /wheel/odom
@@ -169,6 +172,7 @@ steps:
   # Between the LiDAR and everything that reads it: hides a carried box (Phase 2);
   # passes the scan through unchanged otherwise. SLAM and Sendero read /scan_nav.
   - name: scan_filter
+    with_previous: true
     cmd: "ros2 run main_ros scan_filter --ros-args -p input_topic:={scan_raw} -p output_topic:=/scan_nav -p use_sim_time:={use_sim_time}"
     ready:
       - message: /scan_nav
@@ -184,6 +188,7 @@ steps:
     hint: "SLAM publishes /map after its first scan: check /laser_scan, /wheel/odom and TF."
 
   - name: sendero
+    with_previous: true
     cmd: "ros2 run sendero navigator --ros-args -r __node:=sendero --params-file {config_dir}/sendero_puzzlebot.yaml -p use_sim_time:={use_sim_time} -p cmd_vel_topic:={cmd_vel_in}"
     ready:
       - action: /navigate_to_pose
@@ -191,6 +196,7 @@ steps:
     timeout_s: 60
 
   - name: frontera
+    with_previous: true
     role: explorer
     phase: mapping
     cmd: "ros2 run frontera exploration_manager --ros-args --params-file {config_dir}/frontera_puzzlebot.yaml -p use_sim_time:={use_sim_time} -p cmd_vel_topic:={cmd_vel_in}"
@@ -201,6 +207,7 @@ steps:
   # ── camera, ArUco and the landmark mapper (both phases) ──────────────────
   # Real robot: Pi camera + rectification (/camera/image_raw, /camera/image_rect).
   - name: camera
+    group: vision
     modes: [real]
     critical: false
     cmd: "ros2 launch main_ros vision.launch.py"
@@ -209,6 +216,7 @@ steps:
     timeout_s: 40
 
   - name: aruco_detector
+    group: vision
     critical: false
     cmd: "ros2 run main_ros aruco_detector --ros-args --params-file {config_dir}/aruco_localization.yaml -p image_topic:={image_topic} -p use_sim_time:={use_sim_time}"
     ready:
@@ -217,6 +225,7 @@ steps:
     hint: "Check /camera/image_raw and /camera/camera_info."
 
   - name: logo_detector
+    group: vision
     critical: false
     cmd: "ros2 run main_ros logo_detector --ros-args -p model:={logo_model} -p image_topic:={image_topic} -p max_rate_hz:=2.0 -p use_sim_time:={use_sim_time}"
     ready:
@@ -226,6 +235,7 @@ steps:
 
   # Puts every ArUco and logo the camera sees on the SLAM map (saved after mapping).
   - name: landmark_mapper
+    group: vision
     critical: false
     cmd: "ros2 run main_ros landmark_mapper --ros-args -p aruco_config:={config_dir}/aruco_localization.yaml -p use_sim_time:={use_sim_time}"
     ready:

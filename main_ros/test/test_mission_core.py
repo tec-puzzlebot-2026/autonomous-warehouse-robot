@@ -373,3 +373,21 @@ def test_commands_rejected_in_wrong_states():
 def test_aliases(word):
     core, p = ready_system()
     assert core.command(word)[0] and core.state == mc.EXPLORING
+
+
+def test_with_previous_steps_start_in_parallel():
+    steps = [
+        mc.Step('slam', 'ros2 run planisferio slam', [{'message': '/map'}], 10.0, role='slam'),
+        mc.Step('sendero', 'ros2 run sendero navigator', [{'action': '/navigate_to_pose'}], 10.0,
+                with_previous=True),
+        mc.Step('frontera', 'ros2 run frontera exploration_manager',
+                [{'message': '/exploration/status'}], 10.0, role='explorer', with_previous=True),
+    ]
+    p = FakePorts()
+    core = mc.MissionCore(steps, p)
+    core.command('S')
+    core.tick()                                   # one tick: all three are launched
+    assert {'slam', 'sendero', 'frontera'} <= set(p.running)
+    run(core, p, 10)
+    assert core.state == mc.READY
+    assert sum(1 for e in core.events if 'in parallel' in e[1]) == 2

@@ -50,6 +50,9 @@ class WheelOdometry(Node):
         self.declare_parameter("left_topic", "/VelocityEncL")
         self.declare_parameter("right_topic", "/VelocityEncR")
         self.declare_parameter("max_encoder_gap", 0.2)       # s, longer gap: no integration
+        # Publish /wheel/odom and TF at most this often (0 = every encoder message).
+        # Every TF listener processes each TF message: on the Jetson keep it low.
+        self.declare_parameter("publish_rate_hz", 0.0)
 
         self.radius = float(
             self.get_parameter("wheel_radius").value
@@ -108,6 +111,9 @@ class WheelOdometry(Node):
 
         self.input = str(self.get_parameter("input").value)
         self.max_gap = float(self.get_parameter("max_encoder_gap").value)
+        rate = float(self.get_parameter("publish_rate_hz").value)
+        self.min_pub_ns = int(1e9 / rate) if rate > 0 else 0
+        self.last_pub_ns = None
         self.w_left = None
         self.last_enc_ns = None
 
@@ -353,6 +359,11 @@ class WheelOdometry(Node):
     # ==============================================
 
     def publish(self, stamp, v, w):
+        if self.min_pub_ns:
+            ns = stamp.sec * 1_000_000_000 + stamp.nanosec
+            if self.last_pub_ns is not None and 0 <= ns - self.last_pub_ns < self.min_pub_ns:
+                return                      # integrated, not published this time
+            self.last_pub_ns = ns
 
         qz = math.sin(self.theta / 2.0)
         qw = math.cos(self.theta / 2.0)

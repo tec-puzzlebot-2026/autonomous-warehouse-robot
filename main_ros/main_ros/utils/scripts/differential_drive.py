@@ -121,7 +121,10 @@ class VelocityRelay(Node):
         self.linear = 0.0
         self.angular = 0.0
         for _ in range(5):
-            self.publish_cmd(0.0, 0.0)
+            try:
+                self.publish_cmd(0.0, 0.0)
+            except Exception:              # ROS already shut down: nothing to send to
+                break
 
 
 def main(args=None):

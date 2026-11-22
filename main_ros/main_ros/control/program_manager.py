@@ -143,6 +143,9 @@ class ProgramManager(Node):
         auto = self.declare_parameter('autostart', False).value
         self.autostart = str(auto).strip().lower() in ('true', '1', 'yes')
         self.mission = str(self.declare_parameter('mission', 'mapping').value or 'mapping')
+        vision = self.declare_parameter('vision', True).value
+        self.skip_groups = set() if str(vision).strip().lower() in ('true', '1', 'yes') \
+            else {'vision'}
         map_arg = str(self.declare_parameter('map', '').value or '')
         if self.mode not in ('sim', 'real'):
             raise ValueError(f'mode must be "sim" or "real", got "{self.mode}"')
@@ -239,7 +242,8 @@ class ProgramManager(Node):
         self._last_state = None
 
         self._log_line('=' * 64)
-        self._log_line(f'Program Manager — {self.mode.upper()} mode, mission {self.mission}')
+        self._log_line(f'Program Manager — {self.mode.upper()} mode, mission {self.mission}'
+                       + (', without the camera (vision:=false)' if self.skip_groups else ''))
         if self.mission_folder:
             self._log_line(f'mission folder: {self.mission_folder}')
         self._log_line(f'config: {cfg_file}')
@@ -259,6 +263,8 @@ class ProgramManager(Node):
         for raw in self.cfg['steps']:
             if self.mode not in raw.get('modes', ['sim', 'real']):
                 continue
+            if str(raw.get('group', '')) in self.skip_groups:
+                continue
             cmd = str(raw.get('cmd', '') or '').strip()
             try:
                 cmd.format(**self.placeholders)        # filled in again at launch time
@@ -275,7 +281,9 @@ class ProgramManager(Node):
                 critical=bool(raw.get('critical', True)),
                 role=str(raw.get('role', '')),
                 hint=str(raw.get('hint', '')),
-                phase=str(raw.get('phase', 'both'))))
+                phase=str(raw.get('phase', 'both')),
+                with_previous=bool(raw.get('with_previous', False)),
+                group=str(raw.get('group', ''))))
             if raw.get('todo'):
                 steps[-1].hint = (f'This {self.mode} step is not configured yet '
                                   '(todo: true in program_manager.yaml). ' + steps[-1].hint)
