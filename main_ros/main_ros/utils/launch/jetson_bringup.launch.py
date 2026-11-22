@@ -2,7 +2,8 @@
 
 """
 Launch the full PuzzleBot bringup LOCALLY on the Jetson:
-micro-ROS agent (motors, encoders, LiDAR), camera/EKF launch and velocity relay.
+micro-ROS agent (motors, encoders), RPLidar, camera/EKF launch and velocity relay.
+(The Program Manager starts the same script itself in mode:=real.)
 
 Run on the JETSON:
 

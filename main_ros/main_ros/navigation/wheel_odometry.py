@@ -1,3 +1,12 @@
+"""
+wheel_odometry.py — odom -> base_link from the wheels
+
+Two inputs (parameter "input"):
+  joint_states  Isaac Sim: wheel joint positions on /joint_states (default)
+  encoders      PuzzleBot: wheel angular velocities [rad/s] from the Hackerboard on
+                /VelocityEncL and /VelocityEncR (std_msgs/Float32), integrated here
+Publishes /wheel/odom and TF odom -> base_link.
+"""
 import math
 import time
 
@@ -7,6 +16,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 
 from sensor_msgs.msg import JointState
+from std_msgs.msg import Float32
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import TransformStamped
 from tf2_ros import TransformBroadcaster
@@ -35,6 +45,11 @@ class WheelOdometry(Node):
         self.declare_parameter("right_sign", 1.0)
 
         self.declare_parameter("publish_tf", True)
+
+        self.declare_parameter("input", "joint_states")      # or "encoders"
+        self.declare_parameter("left_topic", "/VelocityEncL")
+        self.declare_parameter("right_topic", "/VelocityEncR")
+        self.declare_parameter("max_encoder_gap", 0.2)       # s, longer gap: no integration
 
         self.radius = float(
             self.get_parameter("wheel_radius").value
@@ -91,12 +106,29 @@ class WheelOdometry(Node):
             10
         )
 
-        self.joint_sub = self.create_subscription(
-            JointState,
-            "/joint_states",
-            self.on_joints,
-            qos_profile_sensor_data
-        )
+        self.input = str(self.get_parameter("input").value)
+        self.max_gap = float(self.get_parameter("max_encoder_gap").value)
+        self.w_left = None
+        self.last_enc_ns = None
+
+        if self.input == "encoders":
+            # The Hackerboard publishes both wheels at the same rate; the pose is
+            # integrated when the right wheel arrives, with the latest left value.
+            self.create_subscription(
+                Float32, self.get_parameter("left_topic").value,
+                self.on_left, qos_profile_sensor_data)
+            self.create_subscription(
+                Float32, self.get_parameter("right_topic").value,
+                self.on_right, qos_profile_sensor_data)
+        elif self.input == "joint_states":
+            self.joint_sub = self.create_subscription(
+                JointState,
+                "/joint_states",
+                self.on_joints,
+                qos_profile_sensor_data
+            )
+        else:
+            raise ValueError('input must be "joint_states" or "encoders"')
 
         self.tf_pub = (
             TransformBroadcaster(self)
@@ -107,8 +139,34 @@ class WheelOdometry(Node):
         self.get_logger().info(
             f"Wheel odometry started: "
             f"r={self.radius} m, "
-            f"track={self.separation} m"
+            f"track={self.separation} m, "
+            f"input={self.input}"
         )
+
+    # ==============================================
+    # ENCODER VELOCITIES (real robot)
+    # ==============================================
+
+    def on_left(self, msg):
+        self.w_left = float(msg.data)
+
+    def on_right(self, msg):
+        now = self.get_clock().now()
+        now_ns = now.nanoseconds
+        w_right = float(msg.data)
+        previous = self.last_enc_ns
+        self.last_enc_ns = now_ns
+        if self.w_left is None or previous is None:
+            self.publish(now.to_msg(), 0.0, 0.0)
+            return
+        dt = (now_ns - previous) * 1e-9
+        if dt <= 0.0 or dt > self.max_gap or not (
+                math.isfinite(self.w_left) and math.isfinite(w_right)):
+            return
+        if abs(self.w_left) > 30 or abs(w_right) > 30:
+            self.get_logger().warn("Implausible wheel speed ignored")
+            return
+        self.integrate(self.w_left * dt, w_right * dt, dt, now.to_msg())
 
     # ==============================================
     # ENCODER CALLBACK
@@ -211,6 +269,10 @@ class WheelOdometry(Node):
             )
             return
 
+        self.integrate(dleft, dright, dt, msg.header.stamp)
+
+    def integrate(self, dleft, dright, dt, stamp):
+        """Advance the pose by wheel rotations dleft, dright [rad] over dt [s]."""
         # ==========================================
         # DIFFERENTIAL DRIVE KINEMATICS
         # ==========================================
@@ -264,7 +326,7 @@ class WheelOdometry(Node):
         angular_velocity = dtheta / dt
 
         self.publish(
-            msg.header.stamp,
+            stamp,
             linear_velocity,
             angular_velocity
         )

@@ -38,7 +38,8 @@ modes:
     log_root: ""            # "" = main_ros/logs
     placeholders:
       scan_raw: /laser_scan                 # the LiDAR
-      cmd_vel_in: /cmd_vel                  # where our own short drives are sent
+      cmd_vel_in: /cmd_vel                  # velocity commands (Sendero, Frontera, restock)
+      odom_args: ""                         # wheel odometry from /joint_states
       image_topic: /camera/image_raw        # Isaac renders clean images
       # Detector models: file names in main_ros/main_ros/vision/models/ (found from
       # where main_ros is installed). onnxruntime on the Spark.
@@ -50,8 +51,10 @@ modes:
     maps_dir: ~/maps
     log_root: ""            # "" = main_ros/logs
     placeholders:
-      scan_raw: /Lidar                      # published by the Hackerboard (micro-ROS)
-      cmd_vel_in: /cmd_vel_in               # through the velocity relay (limits)
+      scan_raw: /laser_scan                 # RPLidar (sllidar_ros2, started by robot_bringup)
+      cmd_vel_in: /cmd_vel_in               # through the velocity relay (limits, timeout)
+      # Hackerboard encoders (rad/s); wheel radius and track from the board config
+      odom_args: "-p input:=encoders -p wheel_radius:=0.0505 -p wheel_separation:=0.183"
       image_topic: /camera/image_rect       # color-corrected: what the models were trained on
       # TensorRT FP16 engines built on the Jetson from the .onnx files (same folder).
       logo_model: logos_yolo11n.engine
@@ -108,6 +111,9 @@ stale_process_patterns:
   - 'lib/main_ros/(scan_filter|landmark_mapper|logo_detector|box_target|qr_reader|aruco_detector|forklift_placeholder|encoder_bridge|ekf_localization)( |$)'
   - 'ekf_localization\.launch\.py'
   - 'robot_description\.launch\.py'
+  - 'jetson_bringup_script'
+  - 'lib/sllidar_ros2/sllidar_node( |$)'
+  - 'lib/main_ros/differential_drive( |$)'
   - 'lib/robot_state_publisher/robot_state_publisher( |$)'
 
 # =============================================================================
@@ -130,24 +136,17 @@ steps:
     timeout_s: 180
     hint: "Open Isaac Sim, load the warehouse and press Play."
 
-  # ── real robot: drivers (fill these in on the Jetson) ────────────────────
-  - name: micro_ros_agent
+  # ── real robot: Hackerboard (micro-ROS), RPLidar and the velocity relay ──
+  # The Jetson bringup script (main_ros/utils/scripts/jetson_bringup_script.py);
+  # the camera is started below by the camera step, so --no-camera.
+  - name: robot_bringup
     modes: [real]
-    todo: true
-    cmd: "ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyUSB0"
+    cmd: "ros2 run main_ros jetson_bringup_script --no-camera"
     ready:
-      - message: /joint_states
-    timeout_s: 30
-    hint: "Set the Hackerboard serial port, then remove todo."
-
-  - name: lidar_driver
-    modes: [real]
-    todo: true
-    cmd: ""
-    ready:
+      - message: /VelocityEncR
       - message: /laser_scan
-    timeout_s: 30
-    hint: "Put the LiDAR driver command here (it must publish /laser_scan in frame laser_frame; its position on the robot is laser_joint in config/puzzlebot.urdf)."
+    timeout_s: 60
+    hint: "Check that the Hackerboard and the LiDAR are plugged in (/dev/serial/by-id/) and see ~/.ros/puzzlebot_bringup/micro_ros_agent.log."
 
   # ── shared: robot model, odometry, SLAM, navigation, exploration ────────
   # The URDF (config/puzzlebot.urdf) on /robot_description, for Foxglove, and
@@ -162,7 +161,7 @@ steps:
     hint: "Install robot_state_publisher in the image: ros-jazzy-robot-state-publisher (real robot: ros-humble-robot-state-publisher)."
 
   - name: wheel_odometry
-    cmd: "ros2 run main_ros wheel_odometry --ros-args -p use_sim_time:={use_sim_time}"
+    cmd: "ros2 run main_ros wheel_odometry --ros-args -p use_sim_time:={use_sim_time} {odom_args}"
     ready:
       - message: /wheel/odom
     timeout_s: 30
@@ -185,7 +184,7 @@ steps:
     hint: "SLAM publishes /map after its first scan: check /laser_scan, /wheel/odom and TF."
 
   - name: sendero
-    cmd: "ros2 launch sendero sendero.launch.py params_file:={config_dir}/sendero_puzzlebot.yaml use_sim_time:={use_sim_time}"
+    cmd: "ros2 run sendero navigator --ros-args -r __node:=sendero --params-file {config_dir}/sendero_puzzlebot.yaml -p use_sim_time:={use_sim_time} -p cmd_vel_topic:={cmd_vel_in}"
     ready:
       - action: /navigate_to_pose
       - message: /navigation/status
@@ -194,7 +193,7 @@ steps:
   - name: frontera
     role: explorer
     phase: mapping
-    cmd: "ros2 run frontera exploration_manager --ros-args --params-file {config_dir}/frontera_puzzlebot.yaml -p use_sim_time:={use_sim_time}"
+    cmd: "ros2 run frontera exploration_manager --ros-args --params-file {config_dir}/frontera_puzzlebot.yaml -p use_sim_time:={use_sim_time} -p cmd_vel_topic:={cmd_vel_in}"
     ready:
       - message: /exploration/status
     timeout_s: 60
