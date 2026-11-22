@@ -118,6 +118,14 @@ class HostManager:
                       '(ws://<robot address>:8765)')
             return
         fx = self.cfg.get('foxglove', {})
+        if self.robot.get('local_bridge'):
+            # The robot cannot run foxglove_bridge (the Jetson): run it here. It joins the
+            # robot's ROS 2 network over DDS (same ROS 2 distribution on both sides).
+            cmd = fx.get('bridge_cmd', 'ros2 run foxglove_bridge foxglove_bridge '
+                                       '--ros-args -p port:=8765 -p address:=127.0.0.1')
+            ok, msg = self.sup.start('foxglove_bridge', cmd)
+            self._log(('started' if ok else 'cannot start') + f' foxglove_bridge on this PC: '
+                      f'{msg}')
         if not fx.get('open_studio', True):
             self._log(f'Connect Foxglove to {url}')
             return
@@ -218,7 +226,7 @@ class HostManager:
                 self._log(f'robot Foxglove bridge {url}: '
                           + ('reachable' if up else 'NOT reachable (main.launch.py not '
                              'running yet, the bridge not started, or the network)'))
-        for name in ('monitor', 'foxglove_studio', 'rviz'):
+        for name in ('monitor', 'foxglove_studio', 'foxglove_bridge', 'rviz'):
             mp = self.sup.get(name)
             if mp is not None and not mp.stopping and not mp.alive() \
                     and name not in self._reported_exit:

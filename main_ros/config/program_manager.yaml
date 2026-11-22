@@ -36,6 +36,7 @@ modes:
       scan_raw: /laser_scan                 # the LiDAR
       cmd_vel_in: /cmd_vel                  # velocity commands (Sendero, Frontera, restock)
       odom_args: ""                         # wheel odometry from /joint_states
+      frontera_args: ""
       image_topic: /camera/image_raw        # Isaac renders clean images
       # Detector models: file names in main_ros/main_ros/vision/models/ (found from
       # where main_ros is installed). onnxruntime on the Spark.
@@ -51,6 +52,8 @@ modes:
       cmd_vel_in: /cmd_vel_in               # through the velocity relay (limits, timeout)
       # Hackerboard encoders (rad/s); wheel radius and track from the board config
       odom_args: "-p input:=encoders -p wheel_radius:=0.0505 -p wheel_separation:=0.183 -p publish_rate_hz:=20.0"
+      # The Jetson: one frontier decision takes ~1.4 s, so do not ask for 5 per second.
+      frontera_args: "-p decision_rate_hz:=1.0"
       image_topic: /camera/image_rect       # color-corrected: what the models were trained on
       # TensorRT FP16 engines built on the Jetson from the .onnx files (same folder).
       logo_model: logos_yolo11n.engine
@@ -201,7 +204,7 @@ steps:
     with_previous: true
     role: explorer
     stage: mapping
-    cmd: "ros2 run frontera exploration_manager --ros-args --params-file {config_dir}/frontera_puzzlebot.yaml -p use_sim_time:={use_sim_time} -p cmd_vel_topic:={cmd_vel_in}"
+    cmd: "ros2 run frontera exploration_manager --ros-args --params-file {config_dir}/frontera_puzzlebot.yaml -p use_sim_time:={use_sim_time} -p cmd_vel_topic:={cmd_vel_in} {frontera_args}"
     ready:
       - message: /exploration/status
     timeout_s: 60
@@ -302,6 +305,7 @@ steps:
   # (Humble <-> Jazzy discovery is not fully compatible). Optional: if
   # foxglove_bridge is not installed, the mission continues without it.
   - name: foxglove_bridge
+    modes: [sim]                 # real robot: the bridge runs on the laptop (host_manager)
     critical: false
     cmd: 'ros2 run foxglove_bridge foxglove_bridge --ros-args -r __node:=foxglove_bridge_mission -p port:=8765 -p address:=0.0.0.0 -p send_buffer_limit:=10000000 -p num_threads:=2 -p use_sim_time:={use_sim_time} -p "best_effort_qos_topic_whitelist:=[''^(/tf|/clock|/laser_scan|/slam/scan|/slam/particles|/slam/pose|/wheel/odom|/joint_states|/navigation/local_costmap|/navigation/markers|/scan_nav)$'']"'
     ready:

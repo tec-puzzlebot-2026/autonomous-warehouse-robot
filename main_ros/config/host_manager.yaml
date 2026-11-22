@@ -17,7 +17,8 @@ robot:
     ssh: puzzlebot@jetson.local   # mDNS name: works whichever phone the Jetson is on
     container: ""
     setup: "source /opt/ros/humble/setup.bash && source ~/te3003b_ws/install/setup.bash"
-    foxglove: ws://jetson.local:8765
+    foxglove: ws://localhost:8765 # the bridge runs on this PC (local_bridge)
+    local_bridge: true            # the Jetson has no foxglove_bridge: run it here over DDS
 
 exit_with_monitor: true           # monitor window closed (after X, or Q) -> close everything here
 
@@ -29,6 +30,8 @@ foxglove:
   open_studio: true               # open Foxglove Studio (desktop) connected to the robot
   studio_commands: [foxglove-studio, foxglove]
   close_studio_on_exit: true
+  # local_bridge: the bridge on this PC (real robot). Large topics as best effort.
+  bridge_cmd: 'ros2 run foxglove_bridge foxglove_bridge --ros-args -p port:=8765 -p address:=127.0.0.1 -p send_buffer_limit:=10000000 -p num_threads:=2 -p "best_effort_qos_topic_whitelist:=[''^(/tf|/laser_scan|/slam/scan|/slam/particles|/slam/pose|/wheel/odom|/navigation/local_costmap|/navigation/markers|/scan_nav)$'']"'
 
 rviz:                             # visualization:=rviz (needs DDS to the robot)
   cmd: 'rviz2 -d "$(ros2 pkg prefix planisferio)/share/planisferio/rviz/planisferio.rviz" --ros-args -p use_sim_time:=true'
