@@ -13,7 +13,7 @@
 classes: [box_plain, box_drinks]   # class order of boxes_seg_v1 (any class = a box)
 frame: [640, 480]                  # camera frame the ROI below is written for
 roi: [0, 0, 640, 480]              # whole frame: boxes on the floor and on both rack levels
-net: [640, 480]
+net: [640, 640]
 min_size_px: 12                    # a 12 cm box ~3 m away is ~15 px tall
 conf: 0.40
 nms_iou: 0.5
