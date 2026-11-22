@@ -123,6 +123,16 @@ class _ServiceHandle:
             return False, str(exc)
 
 
+def default_models_dir():
+    """main_ros/main_ros/vision/models in the source tree.
+
+    The models are not installed (too big, not in git); with --symlink-install the
+    installed main_ros package links back to the source, so its real path finds them.
+    """
+    import main_ros
+    return os.path.join(os.path.dirname(os.path.realpath(main_ros.__file__)), 'vision', 'models')
+
+
 class ProgramManager(Node):
     """ROS 2 node: the ports of MissionCore plus status publishing."""
 
@@ -152,8 +162,14 @@ class ProgramManager(Node):
             'mission_dir': '',
             'slam_args': '',
         }
-        for key, value in (mode_cfg.get('placeholders') or {}).items():
-            self.placeholders[key] = os.path.expanduser(str(value))
+        extra = dict(mode_cfg.get('placeholders') or {})
+        self.placeholders['models_dir'] = os.path.expanduser(
+            str(extra.pop('models_dir', '') or default_models_dir()))
+        for key, value in extra.items():
+            value = os.path.expanduser(str(value))
+            if key.endswith('_model') and not os.path.isabs(value):
+                value = os.path.join(self.placeholders['models_dir'], value)
+            self.placeholders[key] = value
         restock_file = os.path.join(self.config_dir, 'restock.yaml')
         self.restock_cfg = {}
         if os.path.isfile(restock_file):

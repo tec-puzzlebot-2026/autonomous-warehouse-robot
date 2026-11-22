@@ -13,7 +13,10 @@
 #   {mission_dir}   the mission folder (restocking: the one loaded; full: the one
 #                   saved at the end of mapping; filled in when the step starts)
 #   {slam_args}     restocking: Planisferio loads the session, localization only
-#   + every key under modes.<mode>.placeholders (topics, model files)
+#   {models_dir}    main_ros/main_ros/vision/models (the source folder, found from the
+#                   installed package; set models_dir under a mode to use another one)
+#   + every key under modes.<mode>.placeholders (topics, model files: a bare file
+#     name is looked up in {models_dir})
 #
 # Readiness checks ("ready", all must hold):
 #   message: /topic   a message arrived (data is really flowing)
@@ -37,10 +40,11 @@ modes:
       scan_raw: /laser_scan                 # the LiDAR
       cmd_vel_in: /cmd_vel                  # where our own short drives are sent
       image_topic: /camera/image_raw        # Isaac renders clean images
-      # Detector models (onnxruntime on the Spark; the Jetson uses TensorRT engines).
-      logo_model: /ws/main_ros/main_ros/vision/models/logos_yolo11n.onnx
-      box_far_model: /ws/main_ros/main_ros/vision/models/boxes_seg_v1.onnx
-      box_near_model: /ws/main_ros/main_ros/vision/models/boxes_seg_v2.onnx
+      # Detector models: file names in main_ros/main_ros/vision/models/ (found from
+      # where main_ros is installed). onnxruntime on the Spark.
+      logo_model: logos_yolo11n.onnx
+      box_far_model: boxes_seg_v1.onnx
+      box_near_model: boxes_seg_v2.onnx
   real:                     # Jetson Nano on the robot
     use_sim_time: false
     maps_dir: ~/maps
@@ -49,11 +53,10 @@ modes:
       scan_raw: /Lidar                      # published by the Hackerboard (micro-ROS)
       cmd_vel_in: /cmd_vel_in               # through the velocity relay (limits)
       image_topic: /camera/image_rect       # color-corrected: what the models were trained on
-      # TensorRT FP16 engines built on the Jetson from the .onnx files (set the folder
-      # to where the repo is on the Jetson).
-      logo_model: ~/autonomous-warehouse-robot/main_ros/main_ros/vision/models/logos_yolo11n.engine
-      box_far_model: ~/autonomous-warehouse-robot/main_ros/main_ros/vision/models/boxes_seg_v1.engine
-      box_near_model: ~/autonomous-warehouse-robot/main_ros/main_ros/vision/models/boxes_seg_v2.engine
+      # TensorRT FP16 engines built on the Jetson from the .onnx files (same folder).
+      logo_model: logos_yolo11n.engine
+      box_far_model: boxes_seg_v1.engine
+      box_near_model: boxes_seg_v2.engine
 
 tick_hz: 10.0               # state machine rate
 status_hz: 2.0              # /mission/status rate (what the monitor reads)
