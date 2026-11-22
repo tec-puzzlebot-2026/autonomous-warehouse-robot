@@ -15,7 +15,7 @@ Keys
     P  pause (the robot holds)
     F  finish mapping now (optimize + save the map)
     M  save the map
-    R  start restocking (after mapping; phase 2 is a placeholder for now)
+    R  start restocking (mission:=full, after mapping)
     N  reset: new mapping run (press twice: it clears the map)
     X  stop: halt and close every script (press twice); then the Program
        Manager, this monitor and the host side close by themselves
@@ -147,6 +147,46 @@ def age_word(age, fresh=3.0):
     return f'stale {a:.0f} s', 'amber'
 
 
+def restock_rows(rs, C):
+    """Rows of the restocking section (5) and of the boxes section (5)."""
+    text, green, amber, red, bold = C['text'], C['green'], C['amber'], C['red'], C['bold']
+    route = rs.get('route') or {}
+    cov = route.get('coverage')
+    route_txt = (f'{min(route.get("next", 0) + 1, route.get("total", 0))}/{route.get("total", 0)}'
+                 + (f' · {100 * cov:.0f} % edges' if cov is not None else '')
+                 + (f' · {route["uncovered"]} skipped' if route.get('uncovered') else ''))
+    box = rs.get('box') or {}
+    if box:
+        what = box.get('company') or ('data missing' if box.get('data_missing') else 'QR ?')
+        box_txt = f'{box.get("id")} · {what} · level {box.get("level")}'
+    else:
+        box_txt = 'none'
+    counts = rs.get('boxes') or {}
+    count_txt = ' · '.join(f'{k} {v}' for k, v in sorted(counts.items())) or 'none yet'
+    bad = any(k in counts for k in ('failed', 'lost', 'unknown', 'no_dock'))
+    left = [
+        ('state', f'{rs.get("state", "–")} / {rs.get("phase", "–")}',
+         red if rs.get('error') else (amber if rs.get('paused') else bold)),
+        ('route', route_txt, text),
+        ('box', box_txt, text),
+        ('boxes', count_txt, amber if bad else green),
+        ('docks', ', '.join(rs.get('docks') or []) or 'none', green if rs.get('docks') else red),
+    ]
+    delivered = rs.get('delivered') or {}
+    events = rs.get('events') or []
+    folder = str(rs.get('folder') or '–')
+    if len(folder) > 50:
+        folder = '…' + folder[-49:]
+    bottom = [
+        ('doing', rs.get('detail', '') or '–', text),
+        ('delivered', ' · '.join(f'{c} {n}' for c, n in delivered.items()) or '–', green),
+        ('problem', rs.get('error') or '–', red if rs.get('error') else C['dim']),
+        ('last event', events[-1][1] if events else '–', text),
+        ('mission folder', folder, C['dim']),
+    ]
+    return left, bottom
+
+
 def draw(scr, node):
     curses.curs_set(0)
     scr.nodelay(True)
@@ -180,7 +220,8 @@ def draw(scr, node):
         'IDLE': dim, 'BRINGUP': amber, 'READY': cyan, 'EXPLORING': green,
         'PAUSED': amber, 'FINISHING': amber, 'MAPPING_DONE': green,
         'RESTOCKING': cyan, 'RESETTING': amber, 'STOPPING': amber,
-        'STOPPED': dim, 'ERROR': red}
+        'STOPPED': dim, 'ERROR': red, 'PHASE2_BRINGUP': amber, 'RESTOCK_PAUSED': amber,
+        'RESTOCK_DONE': green}
     L, W = 1, WIDTH
     M = L + W // 2
     CW = W - 4                       # usable width inside the box
@@ -305,7 +346,11 @@ def draw(scr, node):
         put(scr, y, L, '┌' + '─' * (W - 2) + '┐', dim)
         y += 1
         sides(y)
-        put(scr, y, L + 2, 'Team Zero · Phase 1 Mapping', bold)
+        rs = st.get('restock') or None
+        mission = st.get('mission', 'mapping')
+        title = ('Team Zero · Phase 2 Restocking' if (rs or mission == 'restocking')
+                 else 'Team Zero · Phase 1 Mapping')
+        put(scr, y, L + 2, title, bold)
         up = int(st.get('uptime_s', 0) or 0)
         run = (f'{mode.upper()} · run {up // 3600:d}:{up % 3600 // 60:02d}:{up % 60:02d}'
                if up >= 3600 else f'{mode.upper()} · run {up // 60:02d}:{up % 60:02d}')
@@ -370,8 +415,8 @@ def draw(scr, node):
                 put(scr, y, M + 27, word[:L + W - M - 28], attr)
             y += 1
 
-        # ── exploration | navigation ────────────────────────────────────
-        section(y, 'exploration', mid_title='navigation')
+        # ── exploration (Phase 1) or restocking (Phase 2) | navigation ─
+        section(y, 'restocking' if rs else 'exploration', mid_title='navigation')
         y += 1
         ex_status = ex.get('status') or '–'
         nav_status = nav.get('status') or '–'
@@ -396,6 +441,11 @@ def draw(scr, node):
             ('safety', f'{safety} · {fnum(nav.get("closest_obstacle_m"))} m',
              green if safety == 'CLEAR' else (dim if safety == '–' else amber)),
         ]
+        if rs:
+            ex_rows, map_rows_r = restock_rows(rs, C)
+            nav_rows[2] = ('profile', nav.get('profile', '–'), text)
+            nav_rows[3] = ('remaining', f'{fnum(nav.get("distance_remaining"), "{:.2f}")} m · '
+                                        f'{nav.get("task", "–")}', text)
         for i in range(5):
             sides(y, split=True)
             lab, val, attr = ex_rows[i]
@@ -404,8 +454,8 @@ def draw(scr, node):
             row(y, M + 2, lab, val, attr, width=L + W - M - 4)
             y += 1
 
-        # ── map ─────────────────────────────────────────────────────────
-        section(y, 'map')
+        # ── map (Phase 1) or boxes (Phase 2) ────────────────────────────
+        section(y, 'boxes' if rs else 'map')
         y += 1
         try:
             res = float(slam['res'])
@@ -433,6 +483,8 @@ def draw(scr, node):
              green if slam.get('state') == 'RUNNING' else amber),
             ('last save', saved, sattr),
         ]
+        if rs:
+            map_rows = map_rows_r
         for lab, val, attr in map_rows:
             sides(y)
             row(y, L + 2, lab, val, attr, lw=19, width=CW)

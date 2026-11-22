@@ -185,6 +185,27 @@ setup(
             'program_manager = main_ros.control.program_manager:main',
             'mission_monitor = main_ros.control.mission_monitor:main',
             'host_manager = main_ros.control.host_manager:main',
+
+            # ==========================================
+            # PHASE 2: RESTOCKING
+            # ==========================================
+
+            # Hides the carried box from the LiDAR: /laser_scan -> /scan_nav
+            'scan_filter = main_ros.navigation.scan_filter:main',
+
+            # Puts ArUco markers and company logos on the SLAM map (Phase 1)
+            'landmark_mapper = main_ros.restock.landmark_mapper_node:main',
+
+            # Detectors: company logos, boxes (near: box_target, far: box_target as box_far), QR
+            'logo_detector = main_ros.vision.logos.logo_detector_node:main',
+            'box_target = main_ros.vision.boxes.box_target_node:main',
+            'qr_reader = main_ros.vision.qr.qr_reader_node:main',
+
+            # PickBox / SetDownBox placeholder until the forklift node exists
+            'forklift_placeholder = main_ros.manipulation.forklift_placeholder:main',
+
+            # Isaac Sim /joint_states -> /VelocityEncL, /VelocityEncR (for the EKF)
+            'encoder_bridge = main_ros.simulation.encoder_bridge:main',
         ],
     },
 )

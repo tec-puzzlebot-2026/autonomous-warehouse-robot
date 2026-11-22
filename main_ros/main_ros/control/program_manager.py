@@ -18,13 +18,15 @@
 # and talk to it over ROS 2 (DDS).
 #
 # Start:   ros2 launch main_ros main.launch.py mode:=sim      (or mode:=real)
+#          mission:=mapping | restocking | full   (default mapping)
+#          map:=<mission folder>  (restocking: default the latest one)
 # Control: the monitor (ros2 run main_ros mission_monitor, on the host), or
 #          ros2 topic pub --once /mission/command std_msgs/String "{data: S}"
 #
 # Commands (keys of the monitor):
 #   S start: bring the system up / start exploring / resume
 #   P pause            F finish mapping now      M save the map
-#   R restocking (after mapping; phase 2 is a placeholder for now)
+#   R restocking (mission:=full, after mapping)
 #   N reset (new mapping run)                    X stop (close every script)
 #
 # Topics:
@@ -34,7 +36,7 @@
 #   out: /mission/state (String, one word), /mission/status (String, JSON),
 #        /mission/events (String, one line per event)
 #        /exploration/control, /navigation/control, /exploration/map_save_status
-#        /cmd_vel (zero only, when halting)
+#        /cmd_vel (zero only, when halting), /restock/status (Phase 2, JSON)
 #
 # Logs: main_ros/logs/program_manager_<mode>_<date>_<time>/  manager.txt, all.txt,
 #       <script>.txt,
@@ -59,6 +61,7 @@ from std_srvs.srv import Trigger
 
 from main_ros.control import mission_core as mc
 from main_ros.control.process_supervisor import ProcessSupervisor, run_log_dir
+from main_ros.restock import mission_store as ms
 
 try:
     from rosgraph_msgs.msg import Clock
@@ -129,8 +132,12 @@ class ProgramManager(Node):
         cfg_file = self.declare_parameter('config_file', '').value
         auto = self.declare_parameter('autostart', False).value
         self.autostart = str(auto).strip().lower() in ('true', '1', 'yes')
+        self.mission = str(self.declare_parameter('mission', 'mapping').value or 'mapping')
+        map_arg = str(self.declare_parameter('map', '').value or '')
         if self.mode not in ('sim', 'real'):
             raise ValueError(f'mode must be "sim" or "real", got "{self.mode}"')
+        if self.mission not in mc.MISSIONS:
+            raise ValueError(f'mission must be one of {mc.MISSIONS}, got "{self.mission}"')
         self.config_dir = os.path.dirname(cfg_file) if cfg_file else find_config_dir()
         cfg_file = cfg_file or os.path.join(self.config_dir, 'program_manager.yaml')
         with open(cfg_file) as f:
@@ -138,10 +145,27 @@ class ProgramManager(Node):
         mode_cfg = self.cfg['modes'][self.mode]
         self.placeholders = {
             'mode': self.mode,
+            'mission': self.mission,
             'config_dir': self.config_dir,
             'use_sim_time': 'true' if mode_cfg.get('use_sim_time', False) else 'false',
             'maps_dir': os.path.expanduser(str(mode_cfg.get('maps_dir', '~/maps'))),
+            'mission_dir': '',
+            'slam_args': '',
         }
+        for key, value in (mode_cfg.get('placeholders') or {}).items():
+            self.placeholders[key] = os.path.expanduser(str(value))
+        restock_file = os.path.join(self.config_dir, 'restock.yaml')
+        self.restock_cfg = {}
+        if os.path.isfile(restock_file):
+            with open(restock_file) as f:
+                self.restock_cfg = yaml.safe_load(f) or {}
+        self.store = ms.MissionStore(os.path.join(self.placeholders['maps_dir'], 'missions'))
+        self.mission_folder = None
+        if self.mission == 'restocking':
+            self.mission_folder = self.store.resolve(map_arg)      # clear error if none
+            self._use_mission_folder(self.mission_folder)
+        self.landmarks_json = None
+        self.restock_ports = None
         self.log_dir = run_log_dir(f'program_manager_{self.mode}',
                                    str(mode_cfg.get('log_root', '') or ''))
         os.makedirs(self.placeholders['maps_dir'], exist_ok=True)
@@ -157,6 +181,8 @@ class ProgramManager(Node):
         self.state_pub = self.create_publisher(String, topics['state'], 10)
         self.status_pub = self.create_publisher(String, topics['status'], 10)
         self.events_pub = self.create_publisher(String, topics['events'], 50)
+        self.restock_pub = self.create_publisher(String, topics.get('restock_status',
+                                                                    '/restock/status'), 10)
         self.explorer_pub = self.create_publisher(String, topics['explorer_control'], 10)
         self.nav_pub = self.create_publisher(String, topics['navigation_control'], 10)
         self.map_status_pub = self.create_publisher(String, topics['map_save_status'], 10)
@@ -171,6 +197,8 @@ class ProgramManager(Node):
         self.create_subscription(String, topics['command'], self._on_command, 10)
         self.create_subscription(String, topics['map_save_request'],
                                  lambda m: self.core.on_map_save_request(), 10)
+        self.create_subscription(String, topics.get('landmarks', '/landmark_mapper/landmarks'),
+                                 self._on_landmarks, 5)
 
         # ── readiness probes ─────────────────────────────────────────────
         self._msg_probes = {}           # topic -> {'count', 'last'}
@@ -187,14 +215,17 @@ class ProgramManager(Node):
         m = self.cfg.get('mission', {})
         settings = mc.MissionSettings(**{k: v for k, v in m.items()
                                          if k in mc.MissionSettings.__dataclass_fields__})
-        self.core = mc.MissionCore(self.steps, self, settings, self.mode)
+        self.core = mc.MissionCore(self.steps, self, settings, self.mode, self.mission)
+        self.core.mission_folder = self.mission_folder
 
         self.create_timer(1.0 / float(self.cfg.get('tick_hz', 10.0)), self._tick)
         self.create_timer(1.0 / float(self.cfg.get('status_hz', 2.0)), self._publish_status)
         self._last_state = None
 
         self._log_line('=' * 64)
-        self._log_line(f'Program Manager — {self.mode.upper()} mode')
+        self._log_line(f'Program Manager — {self.mode.upper()} mode, mission {self.mission}')
+        if self.mission_folder:
+            self._log_line(f'mission folder: {self.mission_folder}')
         self._log_line(f'config: {cfg_file}')
         self._log_line(f'logs  : {self.log_dir}')
         self._log_line('steps : ' + ' -> '.join(s.name for s in self.steps))
@@ -214,7 +245,7 @@ class ProgramManager(Node):
                 continue
             cmd = str(raw.get('cmd', '') or '').strip()
             try:
-                cmd = cmd.format(**self.placeholders)
+                cmd.format(**self.placeholders)        # filled in again at launch time
             except KeyError as exc:
                 raise ValueError(f'step {raw["name"]}: unknown placeholder {exc}') from exc
             if raw.get('todo'):
@@ -227,7 +258,8 @@ class ProgramManager(Node):
                 timeout=float(raw.get('timeout_s', 60.0)),
                 critical=bool(raw.get('critical', True)),
                 role=str(raw.get('role', '')),
-                hint=str(raw.get('hint', ''))))
+                hint=str(raw.get('hint', '')),
+                phase=str(raw.get('phase', 'both'))))
             if raw.get('todo'):
                 steps[-1].hint = (f'This {self.mode} step is not configured yet '
                                   '(todo: true in program_manager.yaml). ' + steps[-1].hint)
@@ -248,7 +280,8 @@ class ProgramManager(Node):
             self._log_line(f'killed leftover process {pid}: {cmdline[:120]}')
 
     def launch(self, step):
-        return self.sup.start(step.name, step.cmd)
+        # Placeholders are filled in now: {mission_dir} exists only after mapping.
+        return self.sup.start(step.name, ' '.join(step.cmd.format(**self.placeholders).split()))
 
     def alive(self, step):
         return True if step.external else self.sup.alive(step.name)
@@ -316,6 +349,69 @@ class ProgramManager(Node):
     def log(self, text):
         self._log_line(text)
         self.events_pub.publish(String(data=text))
+
+    # ── phase 2 ──────────────────────────────────────────────────────────
+    def _use_mission_folder(self, folder):
+        self.mission_folder = folder
+        self.placeholders['mission_dir'] = folder
+        if self.mission == 'restocking':
+            session = os.path.join(folder, ms.SESSION)
+            self.placeholders['slam_args'] = (f'-p load_session:={session} '
+                                              '-p localization_only:=true')
+
+    def _on_landmarks(self, msg):
+        try:
+            self.landmarks_json = json.loads(msg.data)
+        except ValueError:
+            pass
+
+    def save_mission(self, raw_message):
+        """End of mapping: the mission folder for Phase 2. -> (ok, text, folder)."""
+        base = ms.parse_saved_base(raw_message or '')
+        if not base:
+            return False, f'no map path in "{raw_message}"', None
+        r = self.restock_cfg.get('restock', {}) or {}
+        companies = tuple(r.get('companies', ('soriene', 'emezon', 'walnut')))
+        ids = list((self.restock_cfg.get('localization', {}) or {}).get('aruco_ids', []) or [])
+        try:
+            with open(os.path.join(self.config_dir, 'arena_map.yaml')) as f:
+                template = ((yaml.safe_load(f) or {}).get('ekf_localization') or {}).get(
+                    'ros__parameters', {})
+        except OSError:
+            template = {}
+        overrides = {'search_rotation': False,
+                     'cmd_vel_topic': self.placeholders.get('cmd_vel_in', '/cmd_vel')}
+        try:
+            folder, info = ms.save_mission_folder(self.store, base, self.landmarks_json, template,
+                                                  companies, ids, overrides)
+        except (OSError, ValueError, KeyError) as exc:
+            return False, str(exc), None
+        self._use_mission_folder(folder)
+        text = (f'{folder} (markers {info["markers"]}, docks {info["docks"]}'
+                + (f', NO dock for {info["missing_docks"]}' if info['missing_docks'] else '')
+                + ('' if info['session'] else ', no Planisferio session!') + ')')
+        if not info['markers']:
+            text += ' - no ArUco marker was found: the EKF cannot run in Phase 2'
+        return True, text, folder
+
+    def make_restock(self, mission, folder):
+        """The restocking state machine on this node's ports."""
+        from main_ros.restock.restock_core import RestockCore, RestockSettings
+        from main_ros.restock.restock_ports import RestockPorts
+        if self.restock_ports is None:
+            cfg = dict(self.restock_cfg)
+            ports = dict(cfg.get('ports', {}) or {})
+            ports.setdefault('aruco_config', os.path.join(self.config_dir,
+                                                          'aruco_localization.yaml'))
+            topics = dict(ports.get('topics', {}) or {})
+            topics.setdefault('cmd_vel', self.placeholders.get('cmd_vel_in', '/cmd_vel'))
+            topics.setdefault('scan', self.placeholders.get('scan_raw', '/laser_scan'))
+            ports['topics'] = topics
+            cfg['ports'] = ports
+            self.restock_ports = RestockPorts(
+                self, cfg, self.log, lambda: self.mission_folder, self.slam_status)
+        settings = RestockSettings.from_dict(self.restock_cfg.get('restock', {}))
+        return RestockCore(self.restock_ports, settings, mission, folder or self.mission_folder)
 
     # =====================================================================
     # readiness checks
@@ -431,7 +527,9 @@ class ProgramManager(Node):
         snap['sim_time_ok'] = (c['first'] is not None and time.monotonic() - c['wall'] < 2.0)
         snap['log_dir'] = self.log_dir
         snap['stamp'] = time.time()
-        self.status_pub.publish(String(data=json.dumps(snap, separators=(',', ':'))))
+        if snap.get('restock'):
+            self.restock_pub.publish(String(data=json.dumps(snap['restock'], default=str)))
+        self.status_pub.publish(String(data=json.dumps(snap, separators=(',', ':'), default=str)))
         self.state_pub.publish(String(data=snap['state']))
 
     # =====================================================================
@@ -449,6 +547,8 @@ class ProgramManager(Node):
         """Halt the robot and close every script (Ctrl+C, or after X)."""
         self._log_line('Shutting down: halting the robot and closing every script...')
         try:
+            if self.core.restock is not None:
+                self.core.restock.abort('shutdown')
             self.send_explorer('STOP')
             self.send_navigation('CANCEL')
             self.zero_velocity()
@@ -457,7 +557,8 @@ class ProgramManager(Node):
         time.sleep(0.3)
         self.sup.stop_all()
         report = ['Program Manager — shutdown report',
-                  f'mode {self.mode}, final state {self.core.state}',
+                  f'mode {self.mode}, mission {self.mission}, final state {self.core.state}',
+                  f'mission folder: {self.core.mission_folder}',
                   f'last map: {self.core.last_map}', ''] + self.sup.report()
         with open(os.path.join(self.log_dir, 'shutdown_report.txt'), 'w') as f:
             f.write('\n'.join(report) + '\n')

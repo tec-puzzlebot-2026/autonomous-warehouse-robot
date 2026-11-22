@@ -17,7 +17,7 @@
     odom_frame: odom
     robot_base_frame: base_link
     map_topic: /map
-    scan_topics: [/laser_scan]
+    scan_topics: [/scan_nav]   # scan filter output: the carried box is masked out
     cmd_vel_topic: /cmd_vel
     motion_model: differential
 

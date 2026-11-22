@@ -1,0 +1,21 @@
+# box_far.yaml — near_box settings for the FAR box detector (boxes_seg_v1)
+#
+# The same box_target executable runs twice:
+#   box_target  boxes_seg_v2, ROI = lower part of the image, big min size: the box in front
+#               of the robot while it approaches (its near_box.yaml sits next to the model)
+#   box_far     boxes_seg_v1 with THIS file (settings:=.../box_far.yaml): the whole frame,
+#               small boxes accepted, so a box across the arena is found while the robot
+#               stands still at a patrol viewpoint. The largest box (= the nearest) wins.
+#
+# net must match the size the v1 model was exported with; the node stops with a clear
+# message if it does not.
+
+classes: [box_plain, box_drinks]   # class order of boxes_seg_v1 (any class = a box)
+frame: [640, 480]                  # camera frame the ROI below is written for
+roi: [0, 0, 640, 480]              # whole frame: boxes on the floor and on both rack levels
+net: [640, 480]
+min_size_px: 12                    # a 12 cm box ~3 m away is ~15 px tall
+conf: 0.40
+nms_iou: 0.5
+max_det: 20
+sticky: 1.0                        # no tracking: every viewpoint is a fresh look

@@ -5,7 +5,7 @@
   ros__parameters:
     use_sim_time: true
 
-    scan_topic: /laser_scan
+    scan_topic: /scan_nav     # the scan filter's output (= /laser_scan unless a box is carried)
     odom_topic: /wheel/odom
     map_frame: map
     odom_frame: ""          # empty = take it from /wheel/odom header

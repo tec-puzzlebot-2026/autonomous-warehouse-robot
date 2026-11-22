@@ -125,6 +125,49 @@ class FakePorts:
     def log(self, text):
         self.logs.append(text)
 
+    # phase 2
+    def save_mission(self, raw):
+        self.saved_missions = getattr(self, 'saved_missions', []) + [raw]
+        return True, '/ws/maps/missions/20260101_120000', '/ws/maps/missions/20260101_120000'
+
+    def make_restock(self, mission, folder):
+        self.restock = FakeRestock(mission, folder)
+        return self.restock
+
+
+class FakeRestock:
+    """Stands in for restock_core.RestockCore."""
+
+    def __init__(self, mission, folder):
+        self.mission, self.folder = mission, folder
+        self.started = self.done = self.paused = False
+        self.error = ''
+        self.outcome = ''
+        self.state, self.phase, self.detail = 'LOAD', 'LOAD', ''
+        self.calls = []
+
+    def start(self):
+        self.started = True
+        self.calls.append('start')
+
+    def tick(self):
+        self.calls.append('tick')
+
+    def pause(self):
+        self.paused = True
+        self.calls.append('pause')
+
+    def resume(self):
+        self.paused = False
+        self.error = ''
+        self.calls.append('resume')
+
+    def abort(self, why=''):
+        self.calls.append('abort')
+
+    def snapshot(self):
+        return {'state': self.state}
+
 
 STEPS = [
     mc.Step('isaac_sim', '', [{'clock': '/clock'}], 30.0),
@@ -132,7 +175,7 @@ STEPS = [
     mc.Step('slam', 'ros2 run planisferio slam', [{'message': '/map'}], 10.0, role='slam'),
     mc.Step('sendero', 'ros2 launch sendero sendero.launch.py', [{'action': '/navigate_to_pose'}], 10.0),
     mc.Step('frontera', 'ros2 run frontera exploration_manager',
-            [{'message': '/exploration/status'}], 10.0, role='explorer'),
+            [{'message': '/exploration/status'}], 10.0, role='explorer', phase='mapping'),
 ]
 
 
@@ -172,9 +215,75 @@ def test_full_mapping_run_to_restocking_stub():
     assert core.state == mc.MAPPING_DONE, core.detail
     assert p.services[:2] == ['slam_optimize', 'slam_save']
     assert core.last_map['ok'] and core.last_map['message'] == '/ws/maps/m'
-    assert 'Press R for restocking' in core.detail
-    assert core.command('R')[0]
-    assert core.state == mc.RESTOCKING
+    assert 'mission:=restocking' in core.detail          # mission:=mapping
+    assert core.mission_folder == '/ws/maps/missions/20260101_120000'
+    assert p.saved_missions == ['Saved /ws/maps/m.pgm and /ws/maps/m.yaml']
+    ok, msg = core.command('R')
+    assert not ok and 'mission:=full' in msg
+
+
+PHASE2 = STEPS + [
+    mc.Step('ekf', 'ros2 launch main_ros ekf_localization.launch.py', [{'message': '/ekf/status'}],
+            10.0, phase='restocking'),
+    mc.Step('forklift', 'ros2 run main_ros forklift_placeholder',
+            [{'action': '/forklift/pick_box'}], 10.0, phase='restocking'),
+    mc.Step('landmark_mapper', 'ros2 run main_ros landmark_mapper', [{'node': '/lm'}], 10.0),
+]
+
+
+def test_full_mission_maps_then_restocks():
+    p = FakePorts()
+    core = mc.MissionCore(PHASE2, p, mission='full')
+    core.command('S')
+    run(core, p, 10)
+    assert core.state == mc.READY
+    assert 'ekf' not in p.running and 'landmark_mapper' in p.running
+    core.command('S')
+    p.explorer = 'COMPLETE'
+    run(core, p, 12)
+    assert core.state == mc.MAPPING_DONE and 'Press R' in core.detail
+    assert core.command('R')[0] and core.state == mc.PHASE2_BRINGUP
+    assert 'frontera' not in p.running                 # Frontera closed on purpose ...
+    run(core, p, 5)
+    assert core.state == mc.RESTOCKING, core.detail   # ... and that is not a failure
+    assert {'ekf', 'forklift'} <= set(p.running)
+    r = p.restock
+    assert r.started and r.mission == 'full' and r.folder == core.mission_folder
+    assert core.command('P')[0] and core.state == mc.RESTOCK_PAUSED and r.paused
+    assert core.command('S')[0] and core.state == mc.RESTOCKING and not r.paused
+    r.error = 'no ArUco found'
+    run(core, p, 0.2)
+    assert core.state == mc.RESTOCK_PAUSED and 'no ArUco' in core.detail
+    core.command('S')
+    assert core.state == mc.RESTOCKING and r.error == ''
+    r.done, r.outcome = True, 'COMPLETE: route finished'
+    run(core, p, 0.2)
+    assert core.state == mc.RESTOCK_DONE
+    assert core.snapshot()['restock'] == {'state': 'LOAD'}
+
+
+def test_restocking_mission_brings_up_phase2_steps_and_starts_on_s():
+    p = FakePorts()
+    core = mc.MissionCore(PHASE2, p, mission='restocking')
+    assert 'frontera' not in [s.name for s in core.steps]
+    core.command('S')
+    run(core, p, 10)
+    assert core.state == mc.READY and 'start restocking' in core.detail
+    assert {'ekf', 'forklift', 'landmark_mapper'} <= set(p.running)
+    assert mc.RESET not in core.allowed() and mc.SAVE_MAP not in core.allowed()
+    core.command('S')
+    assert core.state == mc.RESTOCKING and p.restock.mission == 'restocking'
+    # A script dies: the restocking pauses, the bring-up restarts it, S resumes.
+    p.running.pop('ekf')
+    run(core, p, 0.2)
+    assert core.state == mc.ERROR and p.restock.paused
+    core.command('S')
+    run(core, p, 10)
+    assert core.state == mc.READY
+    core.command('S')
+    assert core.state == mc.RESTOCKING and p.restock.calls.count('start') == 1
+    core.command('X')
+    assert 'abort' in p.restock.calls
 
 
 def test_pause_resume_and_finish_by_operator():

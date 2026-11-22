@@ -9,6 +9,11 @@
 #   {maps_dir}      where SLAM saves maps (per mode, below)
 #   {log_dir}       this run's log folder
 #   {mode}          sim | real
+#   {mission}       mapping | restocking | full
+#   {mission_dir}   the mission folder (restocking: the one loaded; full: the one
+#                   saved at the end of mapping; filled in when the step starts)
+#   {slam_args}     restocking: Planisferio loads the session, localization only
+#   + every key under modes.<mode>.placeholders (topics, model files)
 #
 # Readiness checks ("ready", all must hold):
 #   message: /topic   a message arrived (data is really flowing)
@@ -17,17 +22,38 @@
 #   action:  /name    an action server exists
 #   service: /name    a service exists
 #   node:    /name    a node exists
+#
+# "phase" of a step: both (default), mapping (Phase 1 only: Frontera) or
+# restocking (Phase 2 only). mission:=restocking brings up both + restocking;
+# mission:=full brings up both + mapping, and the restocking steps when R is pressed.
 # =============================================================================
 
 modes:
   sim:                      # Spark: Isaac Sim + the ROS 2 Jazzy container
     use_sim_time: true
-    maps_dir: /ws/maps
+    maps_dir: /ws/maps      # mission folders go to <maps_dir>/missions/
     log_root: ""            # "" = main_ros/logs
+    placeholders:
+      scan_raw: /laser_scan                 # the LiDAR
+      cmd_vel_in: /cmd_vel                  # where our own short drives are sent
+      image_topic: /camera/image_raw        # Isaac renders clean images
+      # Detector models (onnxruntime on the Spark; the Jetson uses TensorRT engines).
+      logo_model: /ws/main_ros/main_ros/vision/models/logos_yolo11n.onnx
+      box_far_model: /ws/main_ros/main_ros/vision/models/boxes_seg_v1.onnx
+      box_near_model: /ws/main_ros/main_ros/vision/models/boxes_seg_v2.onnx
   real:                     # Jetson Nano on the robot
     use_sim_time: false
     maps_dir: ~/maps
     log_root: ""            # "" = main_ros/logs
+    placeholders:
+      scan_raw: /Lidar                      # published by the Hackerboard (micro-ROS)
+      cmd_vel_in: /cmd_vel_in               # through the velocity relay (limits)
+      image_topic: /camera/image_rect       # color-corrected: what the models were trained on
+      # TensorRT FP16 engines built on the Jetson from the .onnx files (set the folder
+      # to where the repo is on the Jetson).
+      logo_model: ~/autonomous-warehouse-robot/main_ros/main_ros/vision/models/logos_yolo11n.engine
+      box_far_model: ~/autonomous-warehouse-robot/main_ros/main_ros/vision/models/boxes_seg_v1.engine
+      box_near_model: ~/autonomous-warehouse-robot/main_ros/main_ros/vision/models/boxes_seg_v2.engine
 
 tick_hz: 10.0               # state machine rate
 status_hz: 2.0              # /mission/status rate (what the monitor reads)
@@ -47,6 +73,8 @@ topics:
   navigation_status: /navigation/status
   navigation_stats: /navigation/stats
   slam_status: /slam/status                  # SLAM v2
+  landmarks: /landmark_mapper/landmarks      # markers + logos found (saved after mapping)
+  restock_status: /restock/status            # out: Phase 2 status (JSON)
 
 services:                   # std_srvs/Trigger of SLAM v2
   slam_reset: /slam/reset
@@ -74,6 +102,8 @@ stale_process_patterns:
   - 'sendero\.launch\.py'
   - 'lib/frontera/exploration_manager( |$)'
   - '__node:=foxglove_bridge_mission'
+  - 'lib/main_ros/(scan_filter|landmark_mapper|logo_detector|box_target|qr_reader|aruco_detector|forklift_placeholder|encoder_bridge|ekf_localization)( |$)'
+  - 'ekf_localization\.launch\.py'
   - 'robot_description\.launch\.py'
   - 'lib/robot_state_publisher/robot_state_publisher( |$)'
 
@@ -134,9 +164,17 @@ steps:
       - message: /wheel/odom
     timeout_s: 30
 
+  # Between the LiDAR and everything that reads it: hides a carried box (Phase 2);
+  # passes the scan through unchanged otherwise. SLAM and Sendero read /scan_nav.
+  - name: scan_filter
+    cmd: "ros2 run main_ros scan_filter --ros-args -p input_topic:={scan_raw} -p output_topic:=/scan_nav -p use_sim_time:={use_sim_time}"
+    ready:
+      - message: /scan_nav
+    timeout_s: 30
+
   - name: slam
     role: slam
-    cmd: "ros2 run planisferio slam --ros-args --params-file {config_dir}/slam_params.yaml -p use_sim_time:={use_sim_time} -p save_dir:={maps_dir}"
+    cmd: "ros2 run planisferio slam --ros-args --params-file {config_dir}/slam_params.yaml -p use_sim_time:={use_sim_time} -p save_dir:={maps_dir} {slam_args}"
     ready:
       - message: /map
       - service: /slam/save_map
@@ -152,10 +190,97 @@ steps:
 
   - name: frontera
     role: explorer
+    phase: mapping
     cmd: "ros2 run frontera exploration_manager --ros-args --params-file {config_dir}/frontera_puzzlebot.yaml -p use_sim_time:={use_sim_time}"
     ready:
       - message: /exploration/status
     timeout_s: 60
+
+  # ── camera, ArUco and the landmark mapper (both phases) ──────────────────
+  # Real robot: Pi camera + rectification (/camera/image_raw, /camera/image_rect).
+  - name: camera
+    modes: [real]
+    critical: false
+    cmd: "ros2 launch main_ros vision.launch.py"
+    ready:
+      - message: /camera/camera_info
+    timeout_s: 40
+
+  - name: aruco_detector
+    critical: false
+    cmd: "ros2 run main_ros aruco_detector --ros-args --params-file {config_dir}/aruco_localization.yaml -p image_topic:={image_topic} -p use_sim_time:={use_sim_time}"
+    ready:
+      - node: /aruco_detector
+    timeout_s: 30
+    hint: "Check /camera/image_raw and /camera/camera_info."
+
+  - name: logo_detector
+    critical: false
+    cmd: "ros2 run main_ros logo_detector --ros-args -p model:={logo_model} -p image_topic:={image_topic} -p max_rate_hz:=2.0 -p use_sim_time:={use_sim_time}"
+    ready:
+      - node: /logo_detector
+    timeout_s: 60
+    hint: "Set logo_model under modes in this file (.engine, .onnx or .pt)."
+
+  # Puts every ArUco and logo the camera sees on the SLAM map (saved after mapping).
+  - name: landmark_mapper
+    critical: false
+    cmd: "ros2 run main_ros landmark_mapper --ros-args -p aruco_config:={config_dir}/aruco_localization.yaml -p use_sim_time:={use_sim_time}"
+    ready:
+      - node: /landmark_mapper
+    timeout_s: 30
+
+  # ── Phase 2: restocking ──────────────────────────────────────────────────
+  # Isaac Sim gives /joint_states; Chris's EKF reads the real robot's encoder topics.
+  - name: encoder_bridge
+    modes: [sim]
+    phase: restocking
+    cmd: "ros2 run main_ros encoder_bridge --ros-args -p use_sim_time:={use_sim_time}"
+    ready:
+      - message: /VelocityEncR
+    timeout_s: 30
+
+  # The EKF on the markers measured while mapping (ekf_landmarks.yaml of the mission folder).
+  - name: ekf
+    phase: restocking
+    critical: false
+    cmd: "ros2 launch main_ros ekf_localization.launch.py start_aruco:=false map:={mission_dir}/ekf_landmarks.yaml"
+    ready:
+      - message: /ekf/status
+    timeout_s: 40
+    hint: "No ekf_landmarks.yaml means no ArUco was found while mapping; Planisferio then needs a pose from Foxglove (2D Pose Estimate)."
+
+  - name: box_far
+    phase: restocking
+    cmd: "ros2 run main_ros box_target --ros-args -r __node:=box_far -p model:={box_far_model} -p settings:={config_dir}/box_far.yaml -p enabled:=false -p max_rate_hz:=5.0 -p image_topic:={image_topic} -p use_sim_time:={use_sim_time}"
+    ready:
+      - node: /box_far
+    timeout_s: 60
+
+  - name: box_target
+    phase: restocking
+    cmd: "ros2 run main_ros box_target --ros-args -p model:={box_near_model} -p enabled:=false -p image_topic:={image_topic} -p use_sim_time:={use_sim_time}"
+    ready:
+      - node: /box_target
+    timeout_s: 60
+
+  - name: qr_reader
+    phase: restocking
+    cmd: "ros2 run main_ros qr_reader --ros-args -p image_topic:={image_topic} -p use_sim_time:={use_sim_time}"
+    ready:
+      - node: /qr_reader
+    timeout_s: 20
+
+  # The forklift teammate's PickBox / SetDownBox server. Until it exists, the
+  # placeholder answers after a few seconds (failures can be injected to test).
+  - name: forklift
+    phase: restocking
+    cmd: "ros2 run main_ros forklift_placeholder --ros-args -p use_sim_time:={use_sim_time}"
+    ready:
+      - action: /forklift/pick_box
+      - action: /forklift/set_down_box
+    timeout_s: 30
+    hint: "Replace the cmd with the teammate's forklift node when it is ready."
 
   # ── visualization: Foxglove bridge next to the robot software ────────────
   # The host's Foxglove Studio connects to ws://<robot address>:8765, so the
@@ -164,7 +289,7 @@ steps:
   # foxglove_bridge is not installed, the mission continues without it.
   - name: foxglove_bridge
     critical: false
-    cmd: 'ros2 run foxglove_bridge foxglove_bridge --ros-args -r __node:=foxglove_bridge_mission -p port:=8765 -p address:=0.0.0.0 -p send_buffer_limit:=10000000 -p num_threads:=2 -p use_sim_time:={use_sim_time} -p "best_effort_qos_topic_whitelist:=[''^(/tf|/clock|/laser_scan|/slam/scan|/slam/particles|/slam/pose|/wheel/odom|/joint_states|/navigation/local_costmap|/navigation/markers)$'']"'
+    cmd: 'ros2 run foxglove_bridge foxglove_bridge --ros-args -r __node:=foxglove_bridge_mission -p port:=8765 -p address:=0.0.0.0 -p send_buffer_limit:=10000000 -p num_threads:=2 -p use_sim_time:={use_sim_time} -p "best_effort_qos_topic_whitelist:=[''^(/tf|/clock|/laser_scan|/slam/scan|/slam/particles|/slam/pose|/wheel/odom|/joint_states|/navigation/local_costmap|/navigation/markers|/scan_nav)$'']"'
     ready:
       - node: /foxglove_bridge_mission
     timeout_s: 20

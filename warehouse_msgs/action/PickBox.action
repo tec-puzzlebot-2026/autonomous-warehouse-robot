@@ -1,0 +1,19 @@
+# PickBox: pick up the box in front of the robot (served by the forklift machine).
+#
+# Sent by the Program Manager when the robot stands in front of the box: parallel to
+# the pick face (within about 5 degrees) and about 7 cm away. The server does the
+# whole pick (IR sensors, forks, fine alignment) and, when it finishes, leaves the
+# robot back at the pose where it received the goal.
+
+string box_id                          # e.g. "box_03"
+uint8 LEVEL_FLOOR = 0
+uint8 LEVEL_1 = 1                      # first rack level (about 19 cm)
+uint8 LEVEL_2 = 2                      # second rack level
+uint8 level
+geometry_msgs/PoseStamped face_pose    # center of the pick face, map frame, x pointing into the box
+float32 distance                       # measured distance from the robot's front to the face [m]
+---
+bool success
+string reason                          # why it failed; empty on success
+---
+string phase                           # free text for the monitor, e.g. "aligning", "lifting"

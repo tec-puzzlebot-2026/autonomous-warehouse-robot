@@ -20,8 +20,18 @@ Phase 1 — autonomous mapping (implemented)
                         (stop exploring, optimize the pose graph, save the map)
                                                          │
                                                          v
-                                                    MAPPING_DONE ──R──> RESTOCKING
-                                                                     (phase 2: stub)
+                                                    MAPPING_DONE ──R──> PHASE2_BRINGUP
+                                                                     (mission:=full)
+
+Phase 2 — restocking (restock/restock_core.py does the work)
+
+  mission:=restocking   IDLE ─S─> BRINGUP (every step, the map is loaded) ─> READY ─S─> RESTOCKING
+  mission:=full         MAPPING_DONE ─R─> PHASE2_BRINGUP (the Phase-2 steps) ─> RESTOCKING
+  RESTOCKING ─P─> RESTOCK_PAUSED ─S─> RESTOCKING ... ─> RESTOCK_DONE
+  A failure the robot cannot handle (no ArUco found, a set-down that fails while
+  holding the box) also stops in RESTOCK_PAUSED: S retries the step.
+
+  mission:=mapping      Phase 1 only; the end of mapping saves a mission folder.
 
   N (reset) from READY / EXPLORING / PAUSED / MAPPING_DONE / RESTOCKING / ERROR:
       stop the robot, restart Frontera, clear SLAM and Sendero -> BRINGUP -> READY
@@ -50,6 +60,9 @@ PAUSED = 'PAUSED'
 FINISHING = 'FINISHING'
 MAPPING_DONE = 'MAPPING_DONE'
 RESTOCKING = 'RESTOCKING'
+PHASE2_BRINGUP = 'PHASE2_BRINGUP'
+RESTOCK_PAUSED = 'RESTOCK_PAUSED'
+RESTOCK_DONE = 'RESTOCK_DONE'
 RESETTING = 'RESETTING'
 STOPPING = 'STOPPING'
 STOPPED = 'STOPPED'
@@ -82,7 +95,10 @@ ALLOWED = {
     PAUSED: [START, FINISH, SAVE_MAP, RESET, STOP],
     FINISHING: [STOP],
     MAPPING_DONE: [RESTOCK, SAVE_MAP, RESET, STOP],
-    RESTOCKING: [SAVE_MAP, RESET, STOP],
+    PHASE2_BRINGUP: [STOP],
+    RESTOCKING: [PAUSE, STOP],
+    RESTOCK_PAUSED: [START, STOP],
+    RESTOCK_DONE: [STOP],
     RESETTING: [STOP],
     STOPPING: [],
     STOPPED: [START],
@@ -91,13 +107,16 @@ ALLOWED = {
 
 # What START does in each state (shown by the monitor next to the S key).
 START_MEANING = {IDLE: 'bring up', STOPPED: 'bring up', READY: 'start exploring',
-                 PAUSED: 'resume', ERROR: 'retry bring-up'}
+                 PAUSED: 'resume', ERROR: 'retry bring-up', RESTOCK_PAUSED: 'resume restocking'}
 
 # Frontera end states (its /exploration/status once a run is over).
 EXPLORATION_END = ('COMPLETE', 'COMPLETE_PARTIAL', 'STAGNATED', 'TIME_LIMIT')
 
 # States in which the launched scripts must stay alive.
-SUPERVISED = (READY, EXPLORING, PAUSED, FINISHING, MAPPING_DONE, RESTOCKING)
+SUPERVISED = (READY, EXPLORING, PAUSED, FINISHING, MAPPING_DONE, RESTOCKING,
+              PHASE2_BRINGUP, RESTOCK_PAUSED, RESTOCK_DONE)
+
+MISSIONS = ('mapping', 'restocking', 'full')
 
 
 @dataclass
@@ -112,6 +131,8 @@ class Step:
         critical: If it dies while the mission runs, the robot is halted.
         role: 'explorer' (restarted on RESET), 'slam' (map services) or ''.
         hint: Extra text for the operator when it does not become ready.
+        phase: 'both' (default), 'mapping' (Phase 1 only) or 'restocking'
+            (Phase 2 only: in mission:=full it starts when R is pressed).
     """
     name: str
     cmd: str = ''
@@ -120,6 +141,7 @@ class Step:
     critical: bool = True
     role: str = ''
     hint: str = ''
+    phase: str = 'both'
 
     @property
     def external(self):
@@ -156,7 +178,7 @@ def describe_checks(checks):
 class MissionCore:
     """Phase-1 mission state machine (autonomous mapping)."""
 
-    def __init__(self, steps, ports, settings=None, mode='sim'):
+    def __init__(self, steps, ports, settings=None, mode='sim', mission='mapping'):
         """Create the state machine in IDLE.
 
         Args:
@@ -165,8 +187,19 @@ class MissionCore:
                 program_manager.py (launch, alive, ready, ...).
             settings: MissionSettings.
             mode: 'sim' or 'real' (informational).
+            mission: 'mapping', 'restocking' or 'full' (see the module docstring).
         """
-        self.steps = list(steps)
+        if mission not in MISSIONS:
+            raise ValueError(f'mission must be one of {MISSIONS}, got {mission!r}')
+        self.mission = mission
+        first = ('both', 'restocking') if mission == 'restocking' else ('both', 'mapping')
+        self.steps = [s for s in steps if s.phase in first]
+        self.phase2_steps = ([s for s in steps if s.phase == 'restocking']
+                             if mission == 'full' else [])
+        self.phase2_started = False
+        self.retired = set()            # steps closed on purpose (Frontera in Phase 2)
+        self.restock = None             # restock_core.RestockCore while Phase 2 runs
+        self.mission_folder = None      # set after mapping, or the folder Phase 2 loads
         self.p = ports
         self.s = settings or MissionSettings()
         self.mode = mode
@@ -180,7 +213,8 @@ class MissionCore:
         self.events = collections.deque(maxlen=60)
         self._op = {}                   # data of the composite operation in progress
         self._save = None               # map save in progress
-        self._event(f'Program Manager ready ({mode} mode). Press S to bring the system up.')
+        self._event(f'Program Manager ready ({mode} mode, mission {mission}). '
+                    'Press S to bring the system up.')
 
     # =====================================================================
     # operator commands
@@ -190,6 +224,12 @@ class MissionCore:
         allowed = list(ALLOWED[self.state])
         if SAVE_MAP in allowed and not self._slam_alive():
             allowed.remove(SAVE_MAP)
+        if self.mission == 'restocking':
+            for cmd in (SAVE_MAP, RESET):          # the loaded map is not changed
+                if cmd in allowed:
+                    allowed.remove(cmd)
+        if self.mission != 'full' and RESTOCK in allowed:
+            allowed.remove(RESTOCK)
         return allowed
 
     def command(self, text):
@@ -206,14 +246,28 @@ class MissionCore:
         if cmd is None:
             return self._reply(False, f'unknown command "{text}"')
         if cmd not in self.allowed():
+            if cmd == RESTOCK and self.mission == 'mapping':
+                return self._reply(False, 'R needs mission:=full; this run only maps. Start '
+                                   'Phase 2 with mission:=restocking (it loads the map '
+                                   'just saved)')
             return self._reply(False, f'{cmd} is not possible in {self.state}')
         if cmd == START:
             if self.state in (IDLE, STOPPED, ERROR):
                 self._begin_bringup(f'{word}: bringing the system up')
+            elif self.state == READY and self._restocking_run():
+                self._start_restocking()
             elif self.state == READY:
                 self._start_exploring('START')
             elif self.state == PAUSED:
                 self._start_exploring('RESUME')
+            elif self.state == RESTOCK_PAUSED:
+                self.restock.resume()
+                self._set(RESTOCKING, 'Restocking resumed.')
+        elif cmd == PAUSE and self.state == RESTOCKING:
+            self.restock.pause()
+            self._halt(explorer='PAUSE', navigation='CANCEL')
+            self._set(RESTOCK_PAUSED, 'Restocking paused: the robot holds (a forklift action '
+                      'was canceled). S resumes.')
         elif cmd == PAUSE:
             self._halt(explorer='PAUSE', navigation='PAUSE')
             self._set(PAUSED, 'Paused: the robot holds. S resumes, F finishes mapping.')
@@ -223,9 +277,9 @@ class MissionCore:
             if not self._request_save('operator'):
                 return self._reply(False, 'a map save is already running')
         elif cmd == RESTOCK:
-            self._set(RESTOCKING, 'Restocking (phase 2) is not implemented yet. '
-                      'N starts a new mapping run, X stops.')
-            self._event('Phase 2 requested: restocking is a placeholder for now.')
+            if not self.mission_folder:
+                return self._reply(False, 'no mission folder was saved (press M, then R)')
+            self._begin_phase2()
         elif cmd == RESET:
             self._begin_reset()
         elif cmd == STOP:
@@ -261,19 +315,73 @@ class MissionCore:
     # ── bring-up ─────────────────────────────────────────────────────────
     def _begin_bringup(self, why):
         """Start (or verify) every step in order."""
-        self._op = {'i': 0, 'phase': 'check', 't0': self.p.now()}
+        self._op = {'i': 0, 'phase': 'check', 't0': self.p.now(), 'steps': self._run_steps()}
         self._set(BRINGUP, 'Bringing the system up...')
         self._event(why)
         self.p.prepare_bringup()
 
+    # ── phase 2 ──────────────────────────────────────────────────────────
+    def _begin_phase2(self):
+        """mission:=full, R: close Frontera, start the Phase-2 scripts, then restock."""
+        self._halt(explorer='STOP', navigation='CANCEL')
+        self.p.send_navigation('RESUME')
+        explorers = [s for s in self.steps if s.role == 'explorer' and not s.external]
+        if explorers:
+            self.retired |= {s.name for s in explorers}
+            self.p.stop_steps(explorers)
+        self.phase2_started = True
+        self._op = {'i': 0, 'phase': 'check', 't0': self.p.now(), 'phase2': True,
+                    'steps': [s for s in self.phase2_steps]}
+        self._set(PHASE2_BRINGUP, 'Starting the Phase-2 scripts (detectors, EKF, forklift)...')
+        self._event(f'Phase 2: restocking with {self.mission_folder}')
+
+    def _tick_phase2_bringup(self, now):
+        self._tick_bringup(now)
+
+    def _start_restocking(self):
+        """Create (or resume) the restocking state machine."""
+        if self.restock is not None and not self.restock.done:
+            self.restock.resume()
+            self._set(RESTOCKING, 'Restocking resumed after the bring-up.')
+            return
+        self.restock = self.p.make_restock(self.mission, self.mission_folder)
+        self.restock.start()
+        self._set(RESTOCKING, 'Restocking: loading the mission...')
+
+    def _tick_restocking(self, now):
+        r = self.restock
+        r.tick()
+        if r.done:
+            self._set(RESTOCK_DONE, f'RESTOCKING DONE: {r.outcome}. X closes everything.')
+            self.p.zero_velocity()
+            return
+        if r.error:
+            self._halt(explorer='PAUSE', navigation='CANCEL')
+            self._set(RESTOCK_PAUSED, f'{r.error} — S retries, X stops.')
+            return
+        self.detail = f'Restocking [{r.state} / {r.phase}]: {r.detail}'
+
+    def _run_steps(self):
+        """Steps the current run needs (Phase 2 steps once Phase 2 has started)."""
+        steps = list(self.steps) + (self.phase2_steps if self.phase2_started else [])
+        return [s for s in steps if s.name not in self.retired]
+
+    def _restocking_run(self):
+        return self.mission == 'restocking' or self.phase2_started
+
     def _tick_bringup(self, now):
         op = self._op
-        if op['i'] >= len(self.steps):
-            self._set(READY, 'System ready. The robot is still. '
-                      'Press S to start exploring.')
+        steps = op.get('steps') or self._run_steps()
+        if op['i'] >= len(steps):
+            if op.get('phase2'):
+                self._event('Phase 2 scripts ready.')
+                self._start_restocking()
+                return
+            what = 'start restocking' if self._restocking_run() else 'start exploring'
+            self._set(READY, f'System ready. The robot is still. Press S to {what}.')
             self._event('All scripts ready.')
             return
-        step = self.steps[op['i']]
+        step = steps[op['i']]
         if op['phase'] == 'check':
             if self.p.alive(step) and self.p.ready(step):
                 op['i'] += 1
@@ -391,8 +499,15 @@ class MissionCore:
         if op['phase'] == 'saving' and self._save is None:
             m = self.last_map or {}
             if m.get('ok'):
+                ok, info, folder = self.p.save_mission(m.get('raw', ''))
+                self._event(('Mission folder saved: ' if ok else 'Mission folder NOT saved: ')
+                            + info)
+                if ok:
+                    self.mission_folder = folder
+                nxt = ('Press R for restocking.' if self.mission == 'full' else
+                       'Start Phase 2 with mission:=restocking.')
                 text = (f'EXPLORATION DONE ({self.end_class}). Map saved: '
-                        f'{m.get("message", "")}. Press R for restocking.')
+                        f'{m.get("message", "")}. {nxt}')
             else:
                 text = (f'EXPLORATION DONE ({self.end_class}). Map NOT saved '
                         f'({m.get("message", "?")}); press M to retry. '
@@ -434,6 +549,8 @@ class MissionCore:
     # ── stop ─────────────────────────────────────────────────────────────
     def _begin_stop(self, why):
         """Halt the robot, save the map, close every script."""
+        if self.restock is not None:
+            self.restock.abort(f'X ({why})')
         self._op = {'phase': 'halt', 't0': self.p.now(), 'why': why}
         self._set(STOPPING, 'Stopping: the robot is halting...')
 
@@ -441,7 +558,8 @@ class MissionCore:
         op = self._op
         if op['phase'] == 'halt':
             self._halt(explorer='STOP', navigation='CANCEL')
-            if self.s.save_map_on_stop and self._slam_alive() and self._save is None:
+            if (self.s.save_map_on_stop and self._slam_alive() and self._save is None
+                    and not self._restocking_run()):
                 self._request_save('stop', force=True)
                 op['phase'] = 'saving'
                 self.detail = 'Stopping: saving the map...'
@@ -454,7 +572,7 @@ class MissionCore:
                 op['phase'] = 'kill'
             return
         if op['phase'] == 'kill':
-            launched = [s for s in self.steps if not s.external]
+            launched = [s for s in self.steps + self.phase2_steps if not s.external]
             op['job'] = self.p.stop_steps(list(reversed(launched)))
             op['phase'], op['t0'] = 'killing', now
             self.detail = 'Stopping: closing every script...'
@@ -474,6 +592,8 @@ class MissionCore:
     # ── errors ───────────────────────────────────────────────────────────
     def _error(self, reason):
         """Bring-up failure: halt and wait for the operator."""
+        if self.restock is not None and not self.restock.done:
+            self.restock.pause()
         self._halt(explorer='PAUSE', navigation='CANCEL')
         self._set(ERROR, f'{reason} — S retries, N resets, X stops.')
         self._event('ERROR: ' + reason)
@@ -484,7 +604,7 @@ class MissionCore:
 
     def _check_health(self):
         """A critical script that died halts the robot."""
-        for step in self.steps:
+        for step in self._run_steps():
             if step.external or not step.critical:
                 continue
             if self.p.was_launched(step) and not self.p.alive(step):
@@ -515,7 +635,7 @@ class MissionCore:
         ok, msg = h.result() if (h is not None and h.done()) else (False, 'SLAM did not answer')
         path = msg.replace('Saved ', '').split(' and ')[0].rsplit('.', 1)[0] if ok else msg
         self.last_map = {'ok': ok, 'message': path, 'time': time.strftime('%H:%M:%S'),
-                         'reason': sv['reason']}
+                         'reason': sv['reason'], 'raw': msg}
         self._save = None
         self.p.publish_map_save_status(('Map saved: ' if ok else 'Map save failed: ') + path)
         self._event(('Map saved: ' if ok else 'Map save failed: ') + path)
@@ -555,6 +675,9 @@ class MissionCore:
         now = self.p.now()
         return {
             'mode': self.mode,
+            'mission': self.mission,
+            'mission_folder': self.mission_folder,
+            'restock': self.restock.snapshot() if self.restock is not None else None,
             'state': self.state,
             'detail': self.detail,
             'allowed': self.allowed(),

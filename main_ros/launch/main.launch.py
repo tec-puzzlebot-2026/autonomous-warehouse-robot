@@ -10,6 +10,12 @@ exploring.
     ros2 launch main_ros main.launch.py mode:=real      # the robot (Jetson)
     ros2 launch main_ros main.launch.py autostart:=true # bring up right away
 
+Missions:
+    mission:=mapping      Phase 1: explore, map, find the ArUco markers, logos and docks;
+                          the end of mapping saves a mission folder (default)
+    mission:=restocking   Phase 2 on the latest mission folder (or map:=<folder>)
+    mission:=full         Phase 1, then R in the monitor starts Phase 2 on the new map
+
 The monitor is opened on the host PC by host.launch.py.
 Ctrl+C here halts the robot and closes every script. X in the monitor does
 the same and then ends this launch (exit_on_stop in program_manager.yaml).
@@ -37,6 +43,8 @@ def generate_launch_description():
             'mode': LaunchConfiguration('mode'),
             'config_file': LaunchConfiguration('config_file'),
             'autostart': ParameterValue(LaunchConfiguration('autostart'), value_type=bool),
+            'mission': LaunchConfiguration('mission'),
+            'map': ParameterValue(LaunchConfiguration('map'), value_type=str),
         }],
         # Give the Program Manager time to halt the robot and close every
         # script after Ctrl+C before launch escalates to SIGTERM / SIGKILL.
@@ -50,6 +58,12 @@ def generate_launch_description():
                               description='program_manager.yaml (default: main_ros/config)'),
         DeclareLaunchArgument('autostart', default_value='false',
                               description='true = bring the system up without waiting for S'),
+        DeclareLaunchArgument('mission', default_value='mapping',
+                              choices=['mapping', 'restocking', 'full'],
+                              description='mapping (Phase 1), restocking (Phase 2) or full'),
+        DeclareLaunchArgument('map', default_value='',
+                              description='restocking: mission folder name or path '
+                                          '(default: <maps_dir>/missions/latest)'),
         manager,
         # The Program Manager closed (after X, or it crashed): end the launch.
         RegisterEventHandler(OnProcessExit(

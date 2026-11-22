@@ -1,0 +1,12 @@
+# SetDownBox: put the carried box down where the robot stands (served by the forklift
+# machine). The robot base does not move; the Program Manager backs away afterwards.
+
+string box_id
+string WHERE_FLOOR = "floor"           # on open floor (QR fallback: the box is read, then picked again)
+string WHERE_DOCK = "dock"             # inside a trailer (delivery)
+string where
+---
+bool success
+string reason
+---
+string phase

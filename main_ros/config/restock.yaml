@@ -1,0 +1,106 @@
+# =============================================================================
+# restock.yaml — Phase 2 (restocking) settings
+# =============================================================================
+# Read by the Program Manager (not a ROS parameter file):
+#   restock       -> restock/restock_core.py (RestockSettings): distances, timeouts
+#   localization  -> which ArUco IDs the EKF may use (saved into ekf_landmarks.yaml)
+#   ports         -> restock/restock_ports.py: topics, our own short drives
+# Nothing about the arena is here: markers, logos and docks are measured while
+# mapping and saved in the mission folder.
+# =============================================================================
+
+restock:
+  companies: [soriene, emezon, walnut]   # QR texts and logo classes (logo model order)
+
+  # ── robot and box geometry ────────────────────────────────────────────────
+  # Gaps are measured from the robot's FRONT to the box face.
+  robot_front_x: 0.12        # m, base_link (wheel axle) -> front of the robot. MEASURE.
+  inspect_gap: 0.25          # m, while reading a face (the whole face in the image)
+  align_gap: 0.20            # m, aligned pose: camera and LiDAR still see the face
+  ready_gap: 0.07            # m, handed to the forklift (PickBox); the last 13 cm by odometry
+  carry_gap: 0.02            # m, a carried box: robot front -> box face
+  back_off: 0.20             # m, reverse after a pick or after a set-down on the floor
+  align_yaw_tol_deg: 5.0     # parallel to the face within this (LiDAR, floor boxes)
+  align_tries: 2
+  pick_tries: 2              # PickBox attempts per box (back off and re-align in between)
+  set_down_tries: 2          # then the robot stops in an error, still holding the box
+  max_off_axis_deg: 50.0     # a face seen this far off-axis still counts
+
+  box_width: 0.12            # m (the face the forklift picks and the QR faces)
+  box_depth: 0.10
+  box_height: 0.12           # the box's height in pixels gives its distance
+  level_heights: [0.0, 0.19, 0.38]   # floor, rack level 1, rack level 2 (MEASURE level 2)
+
+  # ── vision timing ─────────────────────────────────────────────────────────
+  look_settle_s: 0.6         # after stopping / switching a detector, before frames count
+  look_s: 2.0                # far box detector at each viewpoint
+  read_s: 2.0                # QR reading at each face
+  acquire_s: 1.5             # near box detector after the approach
+  logo_look_s: 1.5           # logo check at a dock entrance
+  qr_pair_dt: 0.3            # s, a QR and the box outline must come from about the same frame
+  logo_min_conf: 0.6
+  require_logo: false        # true: never enter a dock whose logo was not seen
+
+  # ── which box ────────────────────────────────────────────────────────────
+  max_far_range: 3.0         # m, farther sightings are ignored (seen again from a closer viewpoint)
+  dup_radius: 0.20           # m, a sighting this close to a known box is that box
+  refine_jump: 0.25          # m, near estimate this far from the far one: approach again
+  max_boxes_per_view: 6
+
+  # ── navigation (Sendero profiles from sendero_puzzlebot.yaml) ─────────────
+  profile_patrol: transport
+  profile_carrying: carrying
+  nav_timeout_s: 120.0
+  align_timeout_s: 45.0
+  drive_timeout_s: 20.0
+  pick_timeout_s: 120.0      # ask the forklift teammate how long a pick takes
+  set_down_timeout_s: 90.0
+
+  # ── localization (restocking mode) ────────────────────────────────────────
+  localize_timeout_s: 300.0  # no ArUco after 5 min: stop and ask for the robot to be moved
+  search_step_deg: 30.0      # start-up search: turn, stand still, look
+  search_pause_s: 1.5
+  collect_wait_s: 12.0
+  confirm_timeout_s: 10.0
+  confirm_tol_m: 0.30        # Planisferio must agree with the EKF pose it was seeded with
+  search_move_max: 1.0       # m, after a full turn without a marker: move this far, look again
+  max_disagreement_m: 0.30   # Planisferio vs EKF ...
+  disagreement_s: 3.0        # ... for this long while driving: stop and re-localize
+
+  # ── survey (only when a company has no dock in the mission folder) ────────
+  survey: true
+  survey_look_s: 1.5
+
+  # ── inspection route (restock/route.py RouteConfig) ───────────────────────
+  route:
+    robot_radius: 0.15       # m
+    standoff_min: 0.40       # m, viewpoint distance to the nearest obstacle
+    standoff_max: 0.80
+    spacing: 0.20            # m between candidate viewpoints
+    view_range: 1.2          # m, edges farther than this do not count as seen
+    fov: 60.0                # deg, horizontal field of view used for coverage
+    target_coverage: 0.98
+
+localization:
+  # ArUco IDs the EKF may use ([] = every marker found while mapping).
+  aruco_ids: [5, 7, 13, 21, 37]
+
+ports:
+  pose_max_age_s: 1.0
+  laser_mount: [0.0, 0.0, 0.0]      # LiDAR in base_link (x, y, yaw), as laser_joint in the URDF
+  base_link_height: 0.047
+  # camera_mount comes from config/aruco_localization.yaml (the EKF's calibration)
+  motion:                           # our own straight drives and turns (odometry)
+    drive_speed: 0.06               # m/s
+    turn_speed: 0.5                 # rad/s
+    center_gain: 1.5                # inside a trailer: keep centered between the side walls
+  topics:                           # defaults in restock_ports.py; cmd_vel and scan come
+    slam_pose: /slam/pose           # from program_manager.yaml (cmd_vel_in, scan_raw)
+    ekf_pose: /ekf/pose
+    ekf_status: /ekf/status
+    odom: /wheel/odom
+    camera_info: /camera/camera_info
+    box_far: [/box_far/target, /box_far/enable]
+    box_target: [/box_target/target, /box_target/enable]
+    qr: [/qr_reader/codes, /qr_reader/enable]
+    logos: [/logo_detector/detections, /logo_detector/enable]
