@@ -1,0 +1,18 @@
+# =============================================================================
+# rf2o_puzzlebot.yaml — LiDAR odometry (rf2o_laser_odometry) on the real robot
+# =============================================================================
+# Started by the Program Manager (program_manager.yaml, step "laser_odometry")
+# while the wheel odometry is being fixed. It matches each scan against the
+# previous one and publishes the motion on /wheel/odom with TF odom -> base_link,
+# the same topic and frames as wheel_odometry, so SLAM and Sendero do not change.
+# =============================================================================
+
+/**:
+  ros__parameters:
+    laser_scan_topic: /scan_nav     # the scan filter's output (= /laser_scan unless a box is carried)
+    odom_topic: /wheel/odom
+    publish_tf: true                # odom -> base_link
+    base_frame_id: base_link
+    odom_frame_id: odom
+    init_pose_from_topic: ""        # start at (0, 0, 0); do not wait for a pose topic
+    freq: 10.0                      # Hz, the RPLidar's scan rate

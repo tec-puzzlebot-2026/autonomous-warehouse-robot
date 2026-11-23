@@ -126,6 +126,7 @@ stale_process_patterns:
   - 'lib/sllidar_ros2/sllidar_node( |$)'
   - 'lib/main_ros/differential_drive( |$)'
   - 'lib/robot_state_publisher/robot_state_publisher( |$)'
+  - 'lib/rf2o_laser_odometry/rf2o_laser_odometry_node( |$)'
 
 # =============================================================================
 # Steps, started in this order. Each waits for its readiness checks before
@@ -176,7 +177,11 @@ steps:
     timeout_s: 20
     hint: "Install robot_state_publisher in the image: ros-jazzy-robot-state-publisher (real robot: ros-humble-robot-state-publisher)."
 
+  # Wheel odometry: the simulation only for now. On the real robot the encoder
+  # odometry is being fixed; laser_odometry (below) replaces it until then. To go
+  # back to the wheels: modes: [sim, real] here, and remove laser_odometry.
   - name: wheel_odometry
+    modes: [sim]
     with_previous: true
     cmd: "ros2 run main_ros wheel_odometry --ros-args -p use_sim_time:={use_sim_time} {odom_args}"
     ready:
@@ -191,6 +196,18 @@ steps:
     ready:
       - message: /scan_nav
     timeout_s: 30
+
+  # Real robot: odometry from LiDAR scan matching (rf2o_laser_odometry, built from
+  # source in ~/te3003b_ws/src). It publishes /wheel/odom and TF odom -> base_link,
+  # exactly like wheel_odometry, so SLAM and Sendero use it unchanged.
+  # Settings: config/rf2o_puzzlebot.yaml.
+  - name: laser_odometry
+    modes: [real]
+    cmd: "ros2 run rf2o_laser_odometry rf2o_laser_odometry_node --ros-args --params-file {config_dir}/rf2o_puzzlebot.yaml"
+    ready:
+      - message: /wheel/odom
+    timeout_s: 30
+    hint: "Build rf2o on the Jetson: cd ~/te3003b_ws/src && git clone -b ros2 https://github.com/MAPIRlab/rf2o_laser_odometry.git, then colcon build --packages-select rf2o_laser_odometry."
 
   - name: slam
     role: slam
