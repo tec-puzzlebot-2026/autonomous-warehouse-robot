@@ -37,7 +37,7 @@ modes:
       cmd_vel_in: /cmd_vel                  # velocity commands (Sendero, Frontera, restock)
       odom_args: ""                         # wheel odometry from /joint_states
       frontera_args: ""
-      slam_tuning: ""
+      slam_tuning: "-p map_publish_period:=2.0 -p use_no_return_free_space:=false -p map_max_range:=4.0 -p match_max_range:=6.0"
       sendero_args: ""
       image_topic: /camera/image_raw        # Isaac renders clean images
       # Detector models: file names in main_ros/main_ros/vision/models/ (found from

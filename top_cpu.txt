@@ -1,0 +1,30 @@
+top - 22:24:19 up 2 min,  3 users,  load average: 2.55, 1.06, 0.40
+Tasks: 241 total,   1 running, 240 sleeping,   0 stopped,   0 zombie
+%Cpu(s): 54.9 us,  5.6 sy,  0.0 ni, 38.0 id,  0.0 wa,  1.4 hi,  0.0 si,  0.0 st
+MiB Mem :   1951.7 total,    738.0 free,    770.5 used,    443.3 buff/cache
+MiB Swap:   5071.9 total,   5071.9 free,      0.0 used.   1083.6 avail Mem 
+
+    PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND
+   4967 puzzleb+  20   0 1232468 129920  33384 S 100.0   6.5   1:05.78 navigator
+   4959 puzzleb+  20   0  721768  83848  33020 S  29.4   4.2   0:23.60 exploration_man
+   4592 puzzleb+  20   0 1218476  69640  27904 S  23.5   3.5   0:36.14 program_manager
+   4960 puzzleb+  20   0  804372  91832  33972 S  23.5   4.6   0:45.14 slam
+   4812 puzzleb+  20   0  692896  59472  26476 S  11.8   3.0   0:07.29 differential_dr
+   4813 puzzleb+  20   0  699176  63472  26980 S  11.8   3.2   0:16.98 wheel_odometry
+   4814 puzzleb+  20   0  699756  67364  27744 S  11.8   3.4   0:11.81 scan_filter
+   4707 puzzleb+  20   0  742768  45128  20840 S   5.9   2.3   0:03.57 mission_monitor
+   5048 puzzleb+  20   0    2644    628    548 S   5.9   0.0   0:00.04 tegrastats
+   5089 puzzleb+  20   0   13696   3520   2868 R   5.9   0.2   0:00.03 top
+      1 root      20   0  167856  10468   7308 S   0.0   0.5   0:02.05 systemd
+      2 root      20   0       0      0      0 S   0.0   0.0   0:00.00 kthreadd
+      3 root      20   0       0      0      0 S   0.0   0.0   0:00.18 kworker/0:0
+      4 root       0 -20       0      0      0 S   0.0   0.0   0:00.00 kworker/0:0H
+      5 root      20   0       0      0      0 S   0.0   0.0   0:00.00 kworker/u8:0
+      6 root      20   0       0      0      0 S   0.0   0.0   0:00.01 ksoftirqd/0
+      7 root      20   0       0      0      0 S   0.0   0.0   0:00.06 rcu_preempt
+      8 root      20   0       0      0      0 S   0.0   0.0   0:00.01 rcu_sched
+      9 root      20   0       0      0      0 S   0.0   0.0   0:00.00 rcu_bh
+     10 root      rt   0       0      0      0 S   0.0   0.0   0:00.00 migration/0
+     11 root       0 -20       0      0      0 S   0.0   0.0   0:00.00 lru-add-drain
+     12 root      rt   0       0      0      0 S   0.0   0.0   0:00.00 watchdog/0
+     13 root      20   0       0      0      0 S   0.0   0.0   0:00.00 cpuhp/0

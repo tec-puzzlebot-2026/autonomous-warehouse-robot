@@ -1,0 +1,30 @@
+top - 22:24:19 up 2 min,  3 users,  load average: 2.55, 1.06, 0.40
+Tasks: 241 total,   2 running, 239 sleeping,   0 stopped,   0 zombie
+%Cpu(s): 59.2 us, 10.5 sy,  0.0 ni, 30.3 id,  0.0 wa,  0.0 hi,  0.0 si,  0.0 st
+MiB Mem :   1951.7 total,    738.6 free,    769.8 used,    443.3 buff/cache
+MiB Swap:   5071.9 total,   5071.9 free,      0.0 used.   1084.2 avail Mem 
+
+    PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND
+   4967 puzzleb+  20   0 1232468 128724  33384 R 117.6   6.4   1:06.02 navigator
+   4960 puzzleb+  20   0  804372  91832  33972 S  35.3   4.6   0:45.21 slam
+   4959 puzzleb+  20   0  721768  83848  33020 S  29.4   4.2   0:23.66 exploration_man
+   4592 puzzleb+  20   0 1218476  69640  27904 S  35.3   3.5   0:36.22 program_manager
+   4814 puzzleb+  20   0  699756  67364  27744 S  11.8   3.4   0:11.84 scan_filter
+   4813 puzzleb+  20   0  699176  63472  26980 S  17.6   3.2   0:17.01 wheel_odometry
+   4812 puzzleb+  20   0  692896  59472  26476 S   5.9   3.0   0:07.30 differential_dr
+   4771 puzzleb+  20   0  688592  56080  26112 S   0.0   2.8   0:01.53 python3
+   4707 puzzleb+  20   0  742768  45128  20840 S   0.0   2.3   0:03.57 mission_monitor
+   4590 puzzleb+  20   0  126688  34512  11448 S   0.0   1.7   0:02.64 ros2
+   4806 puzzleb+  20   0  126180  34160  11188 S   0.0   1.7   0:03.11 ros2
+   4744 puzzleb+  20   0 1532244  29136  14692 S   5.9   1.5   0:04.22 micro_ros_agent
+   4825 puzzleb+  20   0  640584  26596  19508 S   0.0   1.3   0:00.56 robot_state_pub
+   4793 puzzleb+  20   0  784244  26504  17644 S   0.0   1.3   0:02.78 sllidar_node
+   3625 root      20   0  264552  20788  15496 S   0.0   1.0   0:00.55 NetworkManager
+   3880 root      20   0   85532  19028  14212 S   0.0   1.0   0:00.07 nvargus-daemon
+   4647 puzzleb+  20   0   27240  18456   5792 S   0.0   0.9   0:01.37 ros2
+   4904 puzzleb+  20   0   27272  18444   5748 S   0.0   0.9   0:01.62 ros2
+   4810 puzzleb+  20   0   27252  18428   5748 S   0.0   0.9   0:01.63 ros2
+   4718 puzzleb+  20   0   27248  18424   5748 S   0.0   0.9   0:01.34 ros2
+   4900 puzzleb+  20   0   27252  18424   5748 S   0.0   0.9   0:01.65 ros2
+   4902 puzzleb+  20   0   27252  18420   5748 S   0.0   0.9   0:01.63 ros2
+   4805 puzzleb+  20   0   27252  18380   5692 S   0.0   0.9   0:01.55 ros2
