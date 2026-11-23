@@ -37,7 +37,7 @@ modes:
       cmd_vel_in: /cmd_vel                  # velocity commands (Sendero, Frontera, restock)
       odom_args: ""                         # wheel odometry from /joint_states
       frontera_args: ""
-      slam_tuning: "-p map_publish_period:=2.0 -p use_no_return_free_space:=false -p map_max_range:=4.0 -p match_max_range:=6.0"
+      slam_tuning: ""
       sendero_args: ""
       image_topic: /camera/image_raw        # Isaac renders clean images
       # Detector models: file names in main_ros/main_ros/vision/models/ (found from
@@ -58,7 +58,7 @@ modes:
       frontera_args: "-p decision_rate_hz:=1.0"
       # The Jetson: publish the map every 2 s instead of every 1 s (next knob if
       # Planisferio still uses a whole core: -p num_particles:=120).
-      slam_tuning: "-p map_publish_period:=2.0"
+      slam_tuning: "-p map_publish_period:=2.0 -p use_no_return_free_space:=false -p map_max_range:=4.0 -p match_max_range:=6.0"
       # Sendero: every 3rd of the RPLidar's 1080 beams is plenty for obstacles,
       # costmaps published less often, and slower, gentler turns: fast spins in
       # place make the wheels slip and the wheel odometry over-count the turn.
