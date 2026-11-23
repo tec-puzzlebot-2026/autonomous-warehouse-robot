@@ -36,6 +36,7 @@ modes:
       scan_raw: /laser_scan                 # the LiDAR
       cmd_vel_in: /cmd_vel                  # velocity commands (Sendero, Frontera, restock)
       odom_args: ""                         # wheel odometry from /joint_states
+      urdf_file: puzzlebot.urdf             # Isaac's LiDAR: 0 deg = the robot's front
       frontera_args: ""
       slam_tuning: ""
       sendero_args: ""
@@ -52,6 +53,8 @@ modes:
     placeholders:
       scan_raw: /laser_scan                 # RPLidar (sllidar_ros2, started by robot_bringup)
       cmd_vel_in: /cmd_vel_in               # through the velocity relay (limits, timeout)
+      # The RPLidar is mounted with its 0 deg pointing backwards: laser_joint yaw = 180 deg.
+      urdf_file: puzzlebot_real.urdf
       # Hackerboard encoders (rad/s); wheel radius and track from the board config
       odom_args: "-p input:=encoders -p wheel_radius:=0.0505 -p wheel_separation:=0.183 -p publish_rate_hz:=20.0"
       # The Jetson: one frontier decision takes ~1.4 s, so do not ask for 5 per second.
@@ -166,12 +169,13 @@ steps:
     hint: "Check that the Hackerboard and the LiDAR are plugged in (/dev/serial/by-id/) and see ~/.ros/puzzlebot_bringup/micro_ros_agent.log."
 
   # ── shared: robot model, odometry, SLAM, navigation, exploration ────────
-  # The URDF (config/puzzlebot.urdf) on /robot_description, for Foxglove, and
-  # base_link -> laser_frame on /tf_static, for SLAM. Real robot: measure the
-  # LiDAR position and set laser_joint in the URDF.
+  # The URDF on /robot_description, for Foxglove, and base_link -> laser_frame on
+  # /tf_static, for SLAM and rf2o. Per mode (urdf_file above): puzzlebot.urdf in
+  # the simulation, puzzlebot_real.urdf on the robot (LiDAR turned 180 deg; also
+  # measure its x, y position there).
   - name: robot_description
     critical: false
-    cmd: "ros2 launch main_ros robot_description.launch.py use_sim_time:={use_sim_time}"
+    cmd: "ros2 launch main_ros robot_description.launch.py use_sim_time:={use_sim_time} urdf:={config_dir}/{urdf_file}"
     ready:
       - topic: /robot_description
     timeout_s: 20
