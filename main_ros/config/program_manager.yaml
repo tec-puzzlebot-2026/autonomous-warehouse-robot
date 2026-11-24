@@ -37,9 +37,9 @@ modes:
       cmd_vel_in: /cmd_vel                  # velocity commands (Sendero, Frontera, restock)
       odom_args: ""                         # wheel odometry from /joint_states
       urdf_file: puzzlebot.urdf             # Isaac's LiDAR: 0 deg = the robot's front
-      frontera_args: ""
+      frontera_args: "-p expected_speed_mps:=0.3"
       slam_tuning: ""
-      sendero_args: ""
+      sendero_args: "-p max_vel_x:=0.4 -p acc_lim_x:=0.75 -p max_vel_theta:=1.2"
       image_topic: /camera/image_raw        # Isaac renders clean images
       # Detector models: file names in main_ros/main_ros/vision/models/ (found from
       # where main_ros is installed). onnxruntime on the Spark.
