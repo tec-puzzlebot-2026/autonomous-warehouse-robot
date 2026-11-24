@@ -480,6 +480,14 @@ class MissionCore:
             self._event('Planisferio localized on the loaded map')
             self._set(MAPPING_DONE, 'Map loaded and localized. S improves the map '
                       '(stage 2), K skips to the route (stage 3).')
+            self._preview_tour()
+
+    def _preview_tour(self):
+        """Show the stage-2 tour on the map before it is started (if the ports can)."""
+        preview = getattr(self.p, 'preview_tour', None)
+        if preview and self.mission_folder:
+            preview(self.mission_folder)
+            self._event('Stage-2 tour preview: Foxglove, topic /restock/route_markers')
 
     # =====================================================================
     # stage 1: exploring
@@ -576,6 +584,7 @@ class MissionCore:
             if stage == 'mapping':
                 self._set(MAPPING_DONE, f'STAGE 1 DONE ({self.end_class}). {saved} '
                           'S improves the map (stage 2), K skips to the route (stage 3).')
+                self._preview_tour()
             else:
                 self._set(QUALITY_DONE, f'STAGE 2 DONE ({self.end_class}). {saved} '
                           'S plans the restocking route (stage 3).')

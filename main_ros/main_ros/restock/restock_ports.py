@@ -51,6 +51,7 @@ DEFAULT_TOPICS = {
     'carrying': '/restock/carrying',
     'landmarks': '/landmark_mapper/landmarks',
     'cmd_vel': '/cmd_vel',
+    'route_markers': '/restock/route_markers',   # the planned tour / route (Foxglove, RViz)
     # stream: (output topic, enable topic)
     'box_far': ['/box_far/target', '/box_far/enable'],
     'box_target': ['/box_target/target', '/box_target/enable'],
@@ -228,6 +229,12 @@ class RestockPorts:
         self.seed_pub = node.create_publisher(PoseWithCovarianceStamped, t['slam_set_pose'], 10)
         self.reloc_pub = node.create_publisher(Empty, t['ekf_relocalize'], 10)
         self.enable_pubs = {s: node.create_publisher(Bool, t[s][1], 10) for s in STREAMS}
+        try:
+            from visualization_msgs.msg import Marker, MarkerArray
+            self._marker_cls = (Marker, MarkerArray)
+            self.route_pub = node.create_publisher(MarkerArray, t['route_markers'], latched)
+        except ImportError:
+            self._marker_cls = self.route_pub = None
 
         self.buffers = {s: collections.deque(maxlen=80) for s in STREAMS}
         for s in STREAMS:
@@ -483,6 +490,51 @@ class RestockPorts:
     # =====================================================================
     # ports: localization
     # =====================================================================
+    # ── the planned route, for Foxglove / RViz ───────────────────────────
+    ROUTE_COLORS = {'tour_preview': (0.3, 0.8, 1.0), 'map_tour': (0.0, 0.6, 1.0),
+                    'route': (1.0, 0.55, 0.0)}
+
+    def show_route(self, poses, kind='route'):
+        """Publish the goals in visiting order as markers (latched, frame map): a line
+        through all of them, an arrow per goal (the heading the robot stops with) and its
+        number. kind: tour_preview | map_tour | route (only the color differs)."""
+        if self.route_pub is None:
+            return
+        from geometry_msgs.msg import Point
+        Marker, MarkerArray = self._marker_cls
+        stamp = self.node.get_clock().now().to_msg()
+        r, g, b = self.ROUTE_COLORS.get(kind, (1.0, 1.0, 1.0))
+        arr = MarkerArray()
+        clear = Marker()
+        clear.action = Marker.DELETEALL
+        arr.markers.append(clear)
+
+        def base(mid, mtype, scale, alpha=1.0):
+            m = Marker()
+            m.header.frame_id = 'map'
+            m.header.stamp = stamp
+            m.ns, m.id, m.type, m.action = kind, mid, mtype, Marker.ADD
+            m.scale.x, m.scale.y, m.scale.z = scale
+            m.color.r, m.color.g, m.color.b, m.color.a = r, g, b, alpha
+            m.pose.orientation.w = 1.0
+            return m
+
+        line = base(0, Marker.LINE_STRIP, (0.03, 0.0, 0.0), 0.8)
+        for x, y, *_ in poses:
+            line.points.append(Point(x=float(x), y=float(y), z=0.02))
+        arr.markers.append(line)
+        for i, (x, y, th) in enumerate((tuple(p) + (0.0,))[:3] for p in poses):
+            a = base(1 + 2 * i, Marker.ARROW, (0.25, 0.05, 0.05))
+            a.pose.position.x, a.pose.position.y, a.pose.position.z = float(x), float(y), 0.03
+            a.pose.orientation.z, a.pose.orientation.w = math.sin(th / 2), math.cos(th / 2)
+            arr.markers.append(a)
+            n = base(2 + 2 * i, Marker.TEXT_VIEW_FACING, (0.0, 0.0, 0.15))
+            n.color.r = n.color.g = n.color.b = 1.0
+            n.pose.position.x, n.pose.position.y, n.pose.position.z = float(x), float(y), 0.2
+            n.text = str(i + 1)
+            arr.markers.append(n)
+        self.route_pub.publish(arr)
+
     def _fresh(self, value):
         pose, t = value
         return pose if pose is not None and time.monotonic() - t <= self.pose_max_age else None

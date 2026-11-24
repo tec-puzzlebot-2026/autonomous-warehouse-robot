@@ -492,6 +492,28 @@ class ProgramManager(Node):
         return MapTour(self._ports(), TourSettings.from_dict(
             self.restock_cfg.get('map_quality', {})))
 
+    def preview_tour(self, folder):
+        """After mapping: plan the stage-2 tour now (background thread) and show it on
+        /restock/route_markers, so it can be checked in Foxglove before pressing S."""
+        job = _Job()
+        tour = self.make_tour()
+        start = self._ports().slam_pose()
+
+        def work():
+            grid = self.load_grid(folder)
+            if grid is None:
+                return False, f'cannot read the map in {folder}'
+            goals, r = tour.plan(grid, start)
+            if not goals:
+                return False, 'no edge to drive along on this map'
+            self._ports().show_route(goals, 'tour_preview')
+            msg = (f'stage-2 tour preview on /restock/route_markers: {len(goals)} goals, '
+                   f'{r.length:.1f} m per pass, {100 * r.coverage:.0f} % of the edges')
+            self._log_line(msg)
+            return True, msg
+        job.run(work)
+        return job
+
     def load_grid(self, folder):
         """The occupancy grid saved in a mission folder (None if it cannot be read)."""
         from main_ros.restock.grid import OccupancyMap
@@ -505,7 +527,8 @@ class ProgramManager(Node):
         """Stage 3 in a background thread: the patrol route -> <folder>/route.yaml."""
         from main_ros.restock.route import RouteConfig, plan_route
         job = _Job()
-        pose = self._ports().slam_pose()
+        ports = self._ports()
+        pose = ports.slam_pose()
         cfg_route = (self.restock_cfg.get('restock', {}) or {}).get('route', {}) or {}
 
         def work():
@@ -520,6 +543,7 @@ class ProgramManager(Node):
             if not r.viewpoints:
                 return False, 'the map has no edge to patrol'
             ms.write_yaml(os.path.join(folder, ms.ROUTE), r.to_dict())
+            ports.show_route(list(r.viewpoints), 'route')
             return True, (f'{len(r.viewpoints)} viewpoints, {r.length:.1f} m, '
                           f'{100 * r.coverage:.0f} % of the edges')
         job.run(work)

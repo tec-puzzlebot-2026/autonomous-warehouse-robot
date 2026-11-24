@@ -45,6 +45,7 @@ class Ports:
         self.logs = []
         self.cleared = 0
         self.canceled = 0
+        self.shown = []              # (goals, kind) given to show_route
 
     def now(self):
         return self.t
@@ -65,6 +66,9 @@ class Ports:
 
     def clear_costmaps(self):
         self.cleared += 1
+
+    def show_route(self, poses, kind):
+        self.shown.append((list(poses), kind))
 
     def slam_pose(self):
         return tuple(self.pose)
@@ -134,3 +138,14 @@ def test_empty_map_finishes_at_once():
     tour.start(OccupancyMap(np.zeros((40, 40), dtype=np.int16), (0.0, 0.0), 0.05))
     assert tour.done and 'no edge' in tour.outcome
     assert math.isfinite(len(tour.goals))
+
+
+def test_plan_gives_the_goals_without_driving_and_start_shows_them():
+    p = Ports()
+    tour = MapTour(p, TourSettings(passes=2))
+    goals, r = tour.plan(RW.make_world(), (0.6, 0.6, 0.0))
+    assert goals and not p.goals                           # planned, nothing sent
+    assert len(goals) == 2 * (len(r.viewpoints) + 1)       # + the start, every pass
+    tour.start(RW.make_world())
+    assert p.shown and p.shown[-1][1] == 'map_tour' and p.shown[-1][0] == tour.goals
+

@@ -96,6 +96,9 @@ class RouteFollower:
         if self.s.return_to_start:
             self.goals.append(start)
         self.idx = 0
+        show = getattr(self.p, 'show_route', None)
+        if show:
+            show(self.goals, 'route')
         self._event(f'route: {len(self.viewpoints)} viewpoints x {laps} lap(s)'
                     + (', then back to the start' if self.s.return_to_start else '')
                     + (f', {self.route_info.get("length_m", 0):.1f} m per lap'

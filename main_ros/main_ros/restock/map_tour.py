@@ -67,18 +67,29 @@ class MapTour:
         self.events = collections.deque(maxlen=30)
 
     # ── control ──────────────────────────────────────────────────────────
-    def start(self, grid):
-        start = self.p.slam_pose() or (0.0, 0.0, 0.0)
+    def plan(self, grid, start=None):
+        """The tour's goals in visiting order (all passes), without driving: start()
+        uses it, and the Program Manager shows it as a preview after mapping."""
+        start = tuple(start or self.p.slam_pose() or (0.0, 0.0, 0.0))
         r = plan_route(grid, start, self.route_cfg)
         self.route_info = r.to_dict()
         one = list(r.viewpoints)
         if not one:
+            return [], r
+        if self.s.return_to_start:
+            one.append(start)
+        return one * max(1, int(self.s.passes)), r
+
+    def start(self, grid):
+        goals, r = self.plan(grid)
+        if not goals:
             self._finish('no edge to drive along on this map')
             return
-        if self.s.return_to_start:
-            one.append(tuple(start))
-        self.goals = one * max(1, int(self.s.passes))
+        self.goals = goals
         self.idx = 0
+        show = getattr(self.p, 'show_route', None)
+        if show:
+            show(self.goals, 'map_tour')
         self._event(f'map tour: {len(r.viewpoints)} viewpoints x {max(1, int(self.s.passes))} '
                     f'pass(es), {r.length:.1f} m per pass, {100 * r.coverage:.0f} % of the edges')
         self._go()

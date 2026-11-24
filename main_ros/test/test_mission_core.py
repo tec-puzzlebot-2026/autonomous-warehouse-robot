@@ -37,6 +37,7 @@ class FakePorts:
     """Scripts become ready `ready_after` seconds after they start."""
 
     def __init__(self, ready_after=None):
+        self.previews = []           # folders whose stage-2 tour was previewed
         self.t = 0.0
         self.running = {}            # name -> start time
         self.launched = set()
@@ -133,6 +134,9 @@ class FakePorts:
     def make_restock(self, mission, folder):
         self.restock = FakeRestock(mission, folder)
         return self.restock
+
+    def preview_tour(self, folder):
+        self.previews.append(folder)
 
     def make_route_drive(self, folder):
         self.restock = FakeRestock('route_only', folder)
@@ -340,6 +344,13 @@ def test_k_skips_stage_2_and_restocking_starts_the_camera_itself():
     run(core, p, 6)
     assert core.state == mc.RESTOCKING, core.detail
     assert {'camera', 'landmark_mapper', 'ekf', 'forklift'} <= set(p.running)
+
+
+def test_the_stage_2_tour_is_previewed_when_mapping_ends():
+    core, p = ready_system()
+    map_stage_1(core, p)
+    assert core.state == mc.MAPPING_DONE
+    assert p.previews == [core.mission_folder]
 
 
 def test_route_only_drives_the_route_without_starting_anything():
