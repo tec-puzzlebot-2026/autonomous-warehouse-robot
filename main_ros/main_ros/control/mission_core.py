@@ -26,6 +26,8 @@ needs (Frontera after stage 1), so the Jetson is never running everything.
            QUALITY_DONE ─S─> PLANNING ─> ROUTE_READY      (MAPPING_DONE ─K─> PLANNING)
   Stage 4  RESTOCKING    + EKF, box detectors, QR, forklift; Planisferio switches to
            localization only (restock/restock_core.py does the work)
+           restock_mode: route_only -> nothing is started; the robot only drives the
+           stage-3 route and comes back (restock/route_follower.py)
            ROUTE_READY ─S─> STAGE_BRINGUP ─> RESTOCKING ⇄P/S⇄ RESTOCK_PAUSED ─> RESTOCK_DONE
 
   A saved map (map:=<mission folder>): BRINGUP loads it into Planisferio, then
@@ -188,6 +190,9 @@ class MissionSettings:
     stop_timeout_s: float = 15.0
     exit_on_stop: bool = True       # after X: the Program Manager (and the launch) closes
     plan_timeout_s: float = 120.0   # stage 3 on the Jetson
+    # Stage 4: 'full' = restocking (camera, detectors, forklift); 'route_only' = only
+    # drive the stage-3 route (restock/route_follower.py), nothing else is started.
+    restock_mode: str = 'full'
 
 
 def describe_checks(checks):
@@ -635,8 +640,15 @@ class MissionCore:
     # =====================================================================
     # stage 4: restocking
     # =====================================================================
+    def _route_only(self):
+        return str(self.s.restock_mode).lower() == 'route_only'
+
     def _begin_restocking(self):
         self._retire_explorer()
+        if self._route_only():                          # no camera, detectors or forklift
+            self._event('Stage 4: route only (restock_mode: route_only)')
+            self._start_restock()
+            return
         steps = []
         if 'quality' not in self.started_stages:       # stage 2 skipped: camera now
             self.started_stages.add('quality')
@@ -654,6 +666,11 @@ class MissionCore:
                     else 'WARNING: Planisferio has no localization_only service; it keeps '
                     'mapping')
         self.p.send_navigation('RESUME')
+        if self._route_only():
+            self.restock = self.p.make_route_drive(self.mission_folder)
+            self.restock.start()
+            self._set(RESTOCKING, 'Stage 4 (route only): following the route...')
+            return
         self.restock = self.p.make_restock('full', self.mission_folder)
         self.restock.start()
         self._set(RESTOCKING, 'Stage 4: restocking...')
@@ -663,7 +680,8 @@ class MissionCore:
         r.tick()
         if r.done:
             self.done_stages.add('restocking')
-            self._set(RESTOCK_DONE, f'STAGE 4 DONE: {r.outcome}. X closes everything.')
+            what = 'ROUTE DONE' if self._route_only() else 'STAGE 4 DONE'
+            self._set(RESTOCK_DONE, f'{what}: {r.outcome}. X closes everything.')
             self.p.zero_velocity()
             return
         if r.error:
@@ -872,6 +890,13 @@ class MissionCore:
             out.append((stage, title, mark))
         return out
 
+    def _start_meaning(self):
+        meaning = START_MEANING.get(self.state, '')
+        if self._route_only():
+            meaning = {ROUTE_READY: 'follow the route (stage 4, route only)',
+                       RESTOCK_PAUSED: 'resume the route'}.get(self.state, meaning)
+        return meaning
+
     def snapshot(self):
         """Everything the status topic needs."""
         now = self.p.now()
@@ -886,7 +911,7 @@ class MissionCore:
             'state': self.state,
             'detail': self.detail,
             'allowed': self.allowed(),
-            'start_meaning': START_MEANING.get(self.state, ''),
+            'start_meaning': self._start_meaning(),
             'skip_meaning': SKIP_MEANING.get(self.state, ''),
             'state_age_s': round(now - self.state_since, 1),
             'uptime_s': round(now - self.started_at, 1),

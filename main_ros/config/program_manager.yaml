@@ -110,6 +110,11 @@ mission:
   stop_timeout_s: 15.0
   exit_on_stop: true            # after X: the Program Manager closes, main.launch.py ends,
                                 # the monitor and the host side close too (false = stay, S restarts)
+  # Stage 4: full       = restocking (camera, EKF, box detectors, QR, forklift)
+  #          route_only = only drive the route planned in stage 3 (every viewpoint along
+  #                       every obstacle edge, then back to the start); nothing else is
+  #                       started. Settings: route_drive in restock.yaml.
+  restock_mode: route_only
 
 # Leftovers of a crashed earlier run are killed before a bring-up from
 # scratch (regular expressions on the full command line).

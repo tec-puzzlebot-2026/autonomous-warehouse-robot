@@ -3,6 +3,7 @@
 # =============================================================================
 # Read by the Program Manager (not a ROS parameter file):
 #   map_quality   -> restock/map_tour.py (stage 2: the tour round the map)
+#   route_drive   -> restock/route_follower.py (stage 4, route only: drive the route)
 #   restock       -> restock/restock_core.py (RestockSettings): distances, timeouts
 #   localization  -> which ArUco IDs the EKF may use (saved into ekf_landmarks.yaml)
 #   ports         -> restock/restock_ports.py: topics, our own short drives
@@ -22,6 +23,13 @@ map_quality:                 # stage 2 (optional): improve the map, find markers
     standoff_min: 0.40
     standoff_max: 0.90
     fov: 60.0
+
+route_drive:                 # stage 4 with restock_mode: route_only (program_manager.yaml)
+  profile: transport         # Sendero profile
+  dwell_s: 1.0               # stand still at every viewpoint (where the camera will look)
+  nav_timeout_s: 120.0       # per viewpoint; a failed one is retried once, then skipped
+  return_to_start: true      # end where stage 4 started
+  laps: 1                    # times round the whole route
 
 restock:
   companies: [soriene, emezon, walnut]   # QR texts and logo classes (logo model order)

@@ -134,6 +134,10 @@ class FakePorts:
         self.restock = FakeRestock(mission, folder)
         return self.restock
 
+    def make_route_drive(self, folder):
+        self.restock = FakeRestock('route_only', folder)
+        return self.restock
+
     def make_tour(self):
         self.tour = FakeTour()
         return self.tour
@@ -336,6 +340,25 @@ def test_k_skips_stage_2_and_restocking_starts_the_camera_itself():
     run(core, p, 6)
     assert core.state == mc.RESTOCKING, core.detail
     assert {'camera', 'landmark_mapper', 'ekf', 'forklift'} <= set(p.running)
+
+
+def test_route_only_drives_the_route_without_starting_anything():
+    core, p = ready_system(settings=mc.MissionSettings(restock_mode='route_only'))
+    map_stage_1(core, p)
+    assert core.command('K')[0]
+    run(core, p, 1)
+    assert core.state == mc.ROUTE_READY
+    assert 'follow the route' in core.snapshot()['start_meaning']
+    assert core.command('S')[0] and core.state == mc.RESTOCKING, core.detail
+    assert set(p.running) == CORE                          # no camera, EKF or forklift
+    assert 'slam_localization_only' in p.services
+    r = p.restock
+    assert r.started and r.mission == 'route_only' and r.folder == core.mission_folder
+    assert core.command('P')[0] and core.state == mc.RESTOCK_PAUSED and r.paused
+    assert core.command('S')[0] and core.state == mc.RESTOCKING and not r.paused
+    r.done, r.outcome = True, 'COMPLETE: route finished (0 viewpoints skipped)'
+    run(core, p, 0.2)
+    assert core.state == mc.RESTOCK_DONE and 'ROUTE DONE' in core.detail
 
 
 def test_finish_ends_the_tour_early_and_saves():

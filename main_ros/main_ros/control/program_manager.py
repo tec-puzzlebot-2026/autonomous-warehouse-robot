@@ -475,6 +475,17 @@ class ProgramManager(Node):
         settings = RestockSettings.from_dict(self.restock_cfg.get('restock', {}))
         return RestockCore(self._ports(), settings, mission, folder or self.mission_folder)
 
+    def make_route_drive(self, folder):
+        """Stage 4 with restock_mode: route_only: drive the stage-3 route, nothing else."""
+        from main_ros.restock.route import RouteConfig
+        from main_ros.restock.route_follower import RouteDriveSettings, RouteFollower
+        rc = RouteConfig()
+        for k, v in ((self.restock_cfg.get('restock', {}) or {}).get('route', {}) or {}).items():
+            if hasattr(rc, k):
+                setattr(rc, k, math.radians(v) if k == 'fov' and v > 3.2 else v)
+        settings = RouteDriveSettings.from_dict(self.restock_cfg.get('route_drive', {}))
+        return RouteFollower(self._ports(), settings, folder or self.mission_folder, rc)
+
     def make_tour(self):
         """Stage 2: the map-quality tour."""
         from main_ros.restock.map_tour import MapTour, TourSettings

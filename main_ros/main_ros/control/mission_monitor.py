@@ -192,6 +192,10 @@ def restock_rows(rs, C):
         ('boxes', count_txt, amber if bad else green),
         ('docks', ', '.join(rs.get('docks') or []) or 'none', green if rs.get('docks') else red),
     ]
+    if rs.get('mode') == 'route_only':              # only driving the route: no boxes
+        left[2] = ('box', 'not used (route only)', C['dim'])
+        left[3] = ('boxes', 'not used (route only)', C['dim'])
+        left[4] = ('docks', 'not used (route only)', C['dim'])
     delivered = rs.get('delivered') or {}
     events = rs.get('events') or []
     folder = str(rs.get('folder') or '–')
@@ -451,7 +455,8 @@ def draw(scr, node):
             y += 1
 
         # ── exploration (Phase 1) or restocking (Phase 2) | navigation ─
-        section(y, 'restocking' if rs else ('map tour' if tour else 'exploration'),
+        section(y, ('route' if rs.get('mode') == 'route_only' else 'restocking') if rs
+                else ('map tour' if tour else 'exploration'),
                 mid_title='navigation')
         y += 1
         ex_status = ex.get('status') or '–'
