@@ -1,0 +1,36 @@
+#usda 1.0
+(
+    defaultPrim = "RackWithBoxes"
+    metersPerUnit = 1
+    upAxis = "Z"
+    doc = """The two-level rack with one box (cargo on its pallet runners) on each shelf:
+    the 20 mm and the 200 mm pick heights. Drag this file into a stage, or reference
+    rack_two_levels.usda and cargo.usdc separately to place boxes elsewhere."""
+)
+
+def Xform "RackWithBoxes"
+{
+    def "Rack" (
+        prepend references = @./rack_two_levels.usda@
+    )
+    {
+    }
+
+    def Xform "Box_20mm" (
+        prepend references = @./cargo.usdc@
+    )
+    {
+        float xformOp:rotateZ:placement = 90
+        double3 xformOp:translate:placement = (0.045, -0.06, 0.0204)
+        uniform token[] xformOpOrder = ["xformOp:translate:placement", "xformOp:rotateZ:placement"]
+    }
+
+    def Xform "Box_200mm" (
+        prepend references = @./cargo.usdc@
+    )
+    {
+        float xformOp:rotateZ:placement = 90
+        double3 xformOp:translate:placement = (0.045, -0.06, 0.2004)
+        uniform token[] xformOpOrder = ["xformOp:translate:placement", "xformOp:rotateZ:placement"]
+    }
+}

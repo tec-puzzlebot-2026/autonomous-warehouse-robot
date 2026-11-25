@@ -1,0 +1,5 @@
+{
+  "full_profile_speed_mps": 0.070,
+  "powered_time_constant_s": 0.065,
+  "coast_time_constant_s": 0.035
+}

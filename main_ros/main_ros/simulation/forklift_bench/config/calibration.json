@@ -1,0 +1,23 @@
+{
+  "schema_version": 5,
+  "complete": true,
+  "signed_span_counts": 2540,
+  "travel_mm": 254.0,
+  "margin_counts": 80,
+  "tolerance_counts": 20,
+  "reference_bottom_counts": 0,
+  "reference_top_counts": 2540,
+  "session_bottom_counts": 0,
+  "operational_bottom_counts": 0,
+  "last_raw_counts": 0,
+  "session_token": 1,
+  "calibration_points": [
+    {"counts": 0, "mm": 0.0},
+    {"counts": 400, "mm": 40.0},
+    {"counts": 800, "mm": 80.0},
+    {"counts": 1200, "mm": 120.0},
+    {"counts": 1600, "mm": 160.0},
+    {"counts": 2000, "mm": 200.0},
+    {"counts": 2540, "mm": 254.0}
+  ]
+}

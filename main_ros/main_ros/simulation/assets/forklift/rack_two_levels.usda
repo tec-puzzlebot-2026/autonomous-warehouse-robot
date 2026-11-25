@@ -1,0 +1,104 @@
+#usda 1.0
+(
+    defaultPrim = "Rack"
+    metersPerUnit = 1
+    upAxis = "Z"
+    doc = """Two-level rack of the forklift bench (from the teammate's forklift simulation):
+    shelf tops at 0.02 m and 0.20 m, the levels the forklift picks from. The origin is
+    the center of the shelves on the floor; the open side faces -x (the robot comes
+    from -x). Every part has a collider (LiDAR, physics)."""
+)
+
+    def Xform "Rack"
+    {
+        def Cube "Post_0_0" (
+            prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI"]
+        )
+        {
+            float physxCollision:contactOffset = 0.0006
+            float physxCollision:restOffset = 0
+            color3f[] primvars:displayColor = [(0.06, 0.2, 0.69)]
+            double size = 1
+            float3 xformOp:scale = (0.01, 0.01, 0.22)
+            double3 xformOp:translate = (-0.05, -0.16999999999999998, 0.11)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Post_0_2" (
+            prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI"]
+        )
+        {
+            float physxCollision:contactOffset = 0.0006
+            float physxCollision:restOffset = 0
+            color3f[] primvars:displayColor = [(0.06, 0.2, 0.69)]
+            double size = 1
+            float3 xformOp:scale = (0.01, 0.01, 0.22)
+            double3 xformOp:translate = (-0.05, 0.16999999999999998, 0.11)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Post_2_0" (
+            prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI"]
+        )
+        {
+            float physxCollision:contactOffset = 0.0006
+            float physxCollision:restOffset = 0
+            color3f[] primvars:displayColor = [(0.06, 0.2, 0.69)]
+            double size = 1
+            float3 xformOp:scale = (0.01, 0.01, 0.22)
+            double3 xformOp:translate = (0.05, -0.16999999999999998, 0.11)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Post_2_2" (
+            prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI"]
+        )
+        {
+            float physxCollision:contactOffset = 0.0006
+            float physxCollision:restOffset = 0
+            color3f[] primvars:displayColor = [(0.06, 0.2, 0.69)]
+            double size = 1
+            float3 xformOp:scale = (0.01, 0.01, 0.22)
+            double3 xformOp:translate = (0.05, 0.16999999999999998, 0.11)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Back" (
+            prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI"]
+        )
+        {
+            float physxCollision:contactOffset = 0.0006
+            float physxCollision:restOffset = 0
+            color3f[] primvars:displayColor = [(0.43, 0.49, 0.54)]
+            double size = 1
+            float3 xformOp:scale = (0.01, 0.35, 0.22)
+            double3 xformOp:translate = (0.055, 0, 0.11)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Shelf_0" (
+            prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI"]
+        )
+        {
+            float physxCollision:contactOffset = 0.0006
+            float physxCollision:restOffset = 0
+            color3f[] primvars:displayColor = [(0.72, 0.035, 0.035)]
+            double size = 1
+            float3 xformOp:scale = (0.11, 0.35, 0.01)
+            double3 xformOp:translate = (0.0, 0, 0.015)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Cube "Shelf_1" (
+            prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI"]
+        )
+        {
+            float physxCollision:contactOffset = 0.0006
+            float physxCollision:restOffset = 0
+            color3f[] primvars:displayColor = [(0.72, 0.035, 0.035)]
+            double size = 1
+            float3 xformOp:scale = (0.11, 0.35, 0.01)
+            double3 xformOp:translate = (0.0, 0, 0.195)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+    }
