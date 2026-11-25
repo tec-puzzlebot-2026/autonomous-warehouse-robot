@@ -1,349 +1,128 @@
 # =============================================================================
-# program_manager.yaml — what the Program Manager starts, and how it waits
+# restock.yaml — Phase 2 (restocking) settings
 # =============================================================================
-# Read by main_ros/control/program_manager.py (not a ROS parameter file).
-#
-# Placeholders available in every "cmd":
-#   {use_sim_time}  true in sim mode, false in real mode
-#   {config_dir}    this folder (main_ros/config)
-#   {maps_dir}      where SLAM saves maps (per mode, below)
-#   {log_dir}       this run's log folder
-#   {mode}          sim | real
-#   {mission_dir}   the newest mission folder (saved at the end of stage 1 or 2, or
-#                   the one given with map:=); filled in when the step starts
-#   {slam_args}     map:= runs: Planisferio loads that map's session
-#   {models_dir}    main_ros/main_ros/vision/models (the source folder, found from the
-#                   installed package; set models_dir under a mode to use another one)
-#   + every key under modes.<mode>.placeholders (topics, model files: a bare file
-#     name is looked up in {models_dir})
-#
-# Readiness checks ("ready", all must hold):
-#   message: /topic   a message arrived (data is really flowing)
-#   topic:   /topic   someone publishes it
-#   clock:   /clock   simulation time is advancing (Isaac Sim is playing)
-#   action:  /name    an action server exists
-#   service: /name    a service exists
-#   node:    /name    a node exists
-#
+# Read by the Program Manager (not a ROS parameter file):
+#   map_quality   -> restock/map_tour.py (stage 2: the tour round the map)
+#   route_drive   -> restock/route_follower.py (stage 4, route only: drive the route)
+#   restock       -> restock/restock_core.py (RestockSettings): distances, timeouts
+#   localization  -> which ArUco IDs the EKF may use (saved into ekf_landmarks.yaml)
+#   ports         -> restock/restock_ports.py: topics, our own short drives
+# Nothing about the arena is here: markers, logos and docks are measured while
+# mapping and saved in the mission folder.
 # =============================================================================
 
-modes:
-  sim:                      # Spark: Isaac Sim + the ROS 2 Jazzy container
-    use_sim_time: true
-    maps_dir: /ws/maps      # mission folders go to <maps_dir>/missions/
-    log_root: ""            # "" = main_ros/logs
-    placeholders:
-      scan_raw: /laser_scan                 # the LiDAR
-      cmd_vel_in: /cmd_vel                  # velocity commands (Sendero, Frontera, restock)
-      odom_args: ""                         # wheel odometry from /joint_states
-      urdf_file: puzzlebot.urdf             # Isaac's LiDAR: 0 deg = the robot's front
-      frontera_args: "-p expected_speed_mps:=0.3"
-      slam_tuning: ""
-      sendero_args: "-p max_vel_x:=0.4 -p acc_lim_x:=0.75 -p max_vel_theta:=1.2 -p collision_check_time:=0.6"
-      image_topic: /camera/image_raw        # Isaac renders clean images
-      # Detector models: file names in main_ros/main_ros/vision/models/ (found from
-      # where main_ros is installed). onnxruntime on the Spark.
-      logo_model: logos_yolo11n.onnx
-      box_far_model: boxes_seg_v1.onnx
-      box_near_model: boxes_seg_v2.onnx
-  real:                     # Jetson Nano on the robot
-    use_sim_time: false
-    maps_dir: ~/maps
-    log_root: ""            # "" = main_ros/logs
-    placeholders:
-      scan_raw: /laser_scan                 # RPLidar (sllidar_ros2, started by robot_bringup)
-      cmd_vel_in: /cmd_vel_in               # through the velocity relay (limits, timeout)
-      # The RPLidar is mounted with its 0 deg pointing backwards: laser_joint yaw = 180 deg.
-      urdf_file: puzzlebot_real.urdf
-      # Hackerboard encoders (rad/s); wheel radius and track from the board config
-      odom_args: "-p input:=encoders -p wheel_radius:=0.0505 -p wheel_separation:=0.183 -p publish_rate_hz:=20.0"
-      # The Jetson: one frontier decision takes ~1.4 s, so do not ask for 5 per second.
-      frontera_args: "-p decision_rate_hz:=1.0"
-      # The Jetson: publish the map every 2 s instead of every 1 s (next knob if
-      # Planisferio still uses a whole core: -p num_particles:=120).
-      slam_tuning: "-p map_publish_period:=2.0 -p use_no_return_free_space:=false -p map_max_range:=4.0 -p match_max_range:=6.0"
-      # Sendero: every 3rd of the RPLidar's 1080 beams is plenty for obstacles,
-      # costmaps published less often, and slower, gentler turns: fast spins in
-      # place make the wheels slip and the wheel odometry over-count the turn.
-      sendero_args: "-p scan_beam_step:=3 -p local_costmap_publish_period_s:=1.0 -p global_costmap_publish_period_s:=5.0 -p max_vel_theta:=0.6 -p acc_lim_theta:=1.0"
-      image_topic: /camera/image_rect       # color-corrected: what the models were trained on
-      # TensorRT FP16 engines built on the Jetson from the .onnx files (same folder).
-      logo_model: logos_yolo11n.engine
-      box_far_model: boxes_seg_v1.engine
-      box_near_model: boxes_seg_v2.engine
+map_quality:                 # stage 2 (optional): improve the map, find markers and logos
+  profile: patrol            # Sendero profile of the tour (quick stops, sendero_puzzlebot.yaml)
+  dwell_s: 0.8               # stand still at every viewpoint (the landmark mapper only
+                             # uses sightings taken while the robot is still)
+  passes: 1                  # times round the whole map (2 = more loop closures, slower)
+  return_to_start: true      # every pass ends where it began: Planisferio closes the loop
+  nav_timeout_s: 120.0
+  route:                     # viewpoints along every edge (restock/route.py RouteConfig)
+    view_range: 2.0          # m, the camera sees markers farther than the box detector
+    standoff_min: 0.40
+    standoff_max: 0.90
+    fov: 60.0
 
-tick_hz: 10.0               # state machine rate
-status_hz: 2.0              # /mission/status rate (what the monitor reads)
+route_drive:                 # stage 4 with restock_mode: route_only (program_manager.yaml)
+  profile: patrol            # Sendero profile (quick stops, sendero_puzzlebot.yaml)
+  dwell_s: 0.3               # stand still at every viewpoint (no camera in route-only mode)
+  nav_timeout_s: 120.0       # per viewpoint; a failed one is retried once, then skipped
+  return_to_start: true      # end where stage 4 started
+  laps: 1                    # times round the whole route
 
-topics:
-  command: /mission/command                  # in : S P F M R N X (or words)
-  state: /mission/state                      # out: one word
-  status: /mission/status                    # out: JSON for the monitor
-  events: /mission/events                    # out: one line per event
-  cmd_vel: /cmd_vel                          # out: zero velocity when halting
-  explorer_control: /exploration/control     # Frontera
-  explorer_status: /exploration/status
-  explorer_stats: /exploration/stats
-  map_save_request: /exploration/map_save_request
-  map_save_status: /exploration/map_save_status
-  navigation_control: /navigation/control    # Sendero
-  navigation_status: /navigation/status
-  navigation_stats: /navigation/stats
-  slam_status: /slam/status                  # SLAM v2
-  landmarks: /landmark_mapper/landmarks      # markers + logos found (saved after mapping)
-  restock_status: /restock/status            # out: Phase 2 status (JSON)
+restock:
+  companies: [soriene, emezon, walnut]   # QR texts and logo classes (logo model order)
 
-services:                   # std_srvs/Trigger of SLAM v2
-  slam_reset: /slam/reset
-  slam_optimize: /slam/optimize
-  slam_save: /slam/save_map
-  slam_localization_only: /slam/localization_only   # stage 4: the map no longer changes
+  # ── robot and box geometry ────────────────────────────────────────────────
+  # Gaps are measured from the robot's FRONT to the box face.
+  robot_front_x: 0.12        # m, base_link (wheel axle) -> front of the robot. MEASURE.
+  inspect_gap: 0.25          # m, while reading a face (the whole face in the image)
+  align_gap: 0.20            # m, aligned pose: camera and LiDAR still see the face
+  ready_gap: 0.07            # m, handed to the forklift (PickBox); the last 13 cm by odometry
+  carry_gap: 0.02            # m, a carried box: robot front -> box face
+  back_off: 0.20             # m, reverse after a pick or after a set-down on the floor
+  align_yaw_tol_deg: 5.0     # parallel to the face within this (LiDAR, floor boxes)
+  align_tries: 2
+  pick_tries: 2              # PickBox attempts per box (back off and re-align in between)
+  set_down_tries: 2          # then the robot stops in an error, still holding the box
+  max_off_axis_deg: 50.0     # a face seen this far off-axis still counts
 
-mission:
-  start_ack_timeout_s: 5.0      # Frontera must leave WAITING after START
-  start_retries: 3
-  optimize_settle_min_s: 2.0    # after /slam/optimize, wait at least this...
-  optimize_timeout_s: 20.0      # ...and at most this for the back-end to finish
-  service_timeout_s: 5.0
-  save_timeout_s: 15.0
-  save_map_on_stop: true        # X saves the map before closing everything
-  stop_timeout_s: 15.0
-  exit_on_stop: true            # after X: the Program Manager closes, main.launch.py ends,
-                                # the monitor and the host side close too (false = stay, S restarts)
-  # Stage 4: full       = restocking (camera, EKF, box detectors, QR, forklift)
-  #          route_only = only drive the route planned in stage 3 (every viewpoint along
-  #                       every obstacle edge, then back to the start); nothing else is
-  #                       started. Settings: route_drive in restock.yaml.
-  restock_mode: route_only
+  box_width: 0.12            # m (the face the forklift picks and the QR faces)
+  box_depth: 0.10
+  box_height: 0.12           # the box's height in pixels gives its distance
+  level_heights: [0.0, 0.19, 0.38]   # floor, rack level 1, rack level 2 (MEASURE level 2)
 
-# Leftovers of a crashed earlier run are killed before a bring-up from
-# scratch (regular expressions on the full command line).
-stale_process_patterns:
-  - 'lib/main_ros/wheel_odometry( |$)'
-  - 'lib/planisferio/slam( |$)'
-  - 'lib/sendero/navigator( |$)'
-  - 'sendero\.launch\.py'
-  - 'lib/frontera/exploration_manager( |$)'
-  - '__node:=foxglove_bridge_mission'
-  - 'lib/main_ros/(scan_filter|landmark_mapper|logo_detector|box_target|qr_reader|aruco_detector|forklift_placeholder|encoder_bridge|ekf_localization)( |$)'
-  - 'ekf_localization\.launch\.py'
-  - 'robot_description\.launch\.py'
-  - 'vision\.launch\.py'
-  - 'lib/main_ros/(camera_node|image_processing)( |$)'
-  - 'jetson_bringup_script'
-  - 'lib/sllidar_ros2/sllidar_node( |$)'
-  - 'lib/main_ros/differential_drive( |$)'
-  - 'lib/robot_state_publisher/robot_state_publisher( |$)'
-  - 'lib/rf2o_laser_odometry/rf2o_laser_odometry_node( |$)'
+  # ── vision timing ─────────────────────────────────────────────────────────
+  look_settle_s: 0.6         # after stopping / switching a detector, before frames count
+  look_s: 2.0                # far box detector at each viewpoint
+  read_s: 2.0                # QR reading at each face
+  acquire_s: 1.5             # near box detector after the approach
+  logo_look_s: 1.5           # logo check at a dock entrance
+  qr_pair_dt: 0.3            # s, a QR and the box outline must come from about the same frame
+  logo_min_conf: 0.6
+  require_logo: false        # true: never enter a dock whose logo was not seen
 
-# =============================================================================
-# Steps, started in this order. Each waits for its readiness checks before
-# the next one starts. "modes" selects sim, real or both.
-#   critical: true   -> if it dies during the mission, the robot is halted
-#   role: slam       -> the map services belong to it
-#   role: explorer   -> restarted by RESET (Frontera's STOP is final)
-#   todo: true       -> not configured yet; bring-up stops here with the hint
-#   with_previous    -> started together with the step above (parallel start)
-#   stage            -> core (default: started at bring-up, runs the whole time)
-#                       mapping    stage 1 only (Frontera; closed after stage 1)
-#                       quality    from stage 2 on (camera, ArUco, logos, landmark mapper)
-#                       restocking stage 4 (EKF, box detectors, QR, forklift)
-# =============================================================================
-steps:
+  # ── which box ────────────────────────────────────────────────────────────
+  max_far_range: 3.0         # m, farther sightings are ignored (seen again from a closer viewpoint)
+  dup_radius: 0.20           # m, a sighting this close to a known box is that box
+  refine_jump: 0.25          # m, near estimate this far from the far one: approach again
+  max_boxes_per_view: 6
 
-  # ── simulation: Isaac Sim is started by hand on the Spark ────────────────
-  - name: isaac_sim
-    modes: [sim]
-    ready:
-      - clock: /clock
-      - message: /laser_scan
-      - message: /joint_states
-    timeout_s: 180
-    hint: "Open Isaac Sim, load the warehouse and press Play."
+  # ── navigation (Sendero profiles from sendero_puzzlebot.yaml) ─────────────
+  profile_patrol: transport
+  profile_carrying: carrying
+  nav_timeout_s: 120.0
+  align_timeout_s: 45.0
+  drive_timeout_s: 20.0
+  pick_timeout_s: 120.0      # ask the forklift teammate how long a pick takes
+  set_down_timeout_s: 90.0
 
-  # ── real robot: Hackerboard (micro-ROS), RPLidar and the velocity relay ──
-  # The Jetson bringup script (main_ros/utils/scripts/jetson_bringup_script.py);
-  # the camera is started below by the camera step, so --no-camera.
-  - name: robot_bringup
-    modes: [real]
-    cmd: "ros2 run main_ros jetson_bringup_script --no-camera"
-    ready:
-      - message: /VelocityEncR
-      - message: /laser_scan
-    timeout_s: 60
-    hint: "Check that the Hackerboard and the LiDAR are plugged in (/dev/serial/by-id/) and see ~/.ros/puzzlebot_bringup/micro_ros_agent.log."
+  # ── localization (restocking mode) ────────────────────────────────────────
+  localize_timeout_s: 300.0  # no ArUco after 5 min: stop and ask for the robot to be moved
+  search_step_deg: 30.0      # start-up search: turn, stand still, look
+  search_pause_s: 1.5
+  collect_wait_s: 12.0
+  confirm_timeout_s: 10.0
+  confirm_tol_m: 0.30        # Planisferio must agree with the EKF pose it was seeded with
+  search_move_max: 1.0       # m, after a full turn without a marker: move this far, look again
+  max_disagreement_m: 0.30   # Planisferio vs EKF ...
+  disagreement_s: 3.0        # ... for this long while driving: stop and re-localize
 
-  # ── shared: robot model, odometry, SLAM, navigation, exploration ────────
-  # The URDF on /robot_description, for Foxglove, and base_link -> laser_frame on
-  # /tf_static, for SLAM and rf2o. Per mode (urdf_file above): puzzlebot.urdf in
-  # the simulation, puzzlebot_real.urdf on the robot (LiDAR turned 180 deg; also
-  # measure its x, y position there).
-  - name: robot_description
-    critical: false
-    cmd: "ros2 launch main_ros robot_description.launch.py use_sim_time:={use_sim_time} urdf:={config_dir}/{urdf_file}"
-    ready:
-      - topic: /robot_description
-    timeout_s: 20
-    hint: "Install robot_state_publisher in the image: ros-jazzy-robot-state-publisher (real robot: ros-humble-robot-state-publisher)."
+  # ── survey (only when a company has no dock in the mission folder) ────────
+  survey: true
+  survey_look_s: 1.5
 
-  # Wheel odometry: the simulation only for now. On the real robot the encoder
-  # odometry is being fixed; laser_odometry (below) replaces it until then. To go
-  # back to the wheels: modes: [sim, real] here, and remove laser_odometry.
-  - name: wheel_odometry
-    modes: [sim]
-    with_previous: true
-    cmd: "ros2 run main_ros wheel_odometry --ros-args -p use_sim_time:={use_sim_time} {odom_args}"
-    ready:
-      - message: /wheel/odom
-    timeout_s: 30
+  # ── inspection route (restock/route.py RouteConfig) ───────────────────────
+  route:
+    robot_radius: 0.15       # m
+    standoff_min: 0.40       # m, viewpoint distance to the nearest obstacle
+    standoff_max: 0.80
+    spacing: 0.20            # m between candidate viewpoints
+    view_range: 1.2          # m, edges farther than this do not count as seen
+    fov: 60.0                # deg, horizontal field of view used for coverage
+    target_coverage: 0.98
 
-  # Between the LiDAR and everything that reads it: hides a carried box (Phase 2);
-  # passes the scan through unchanged otherwise. SLAM and Sendero read /scan_nav.
-  - name: scan_filter
-    with_previous: true
-    cmd: "ros2 run main_ros scan_filter --ros-args -p input_topic:={scan_raw} -p output_topic:=/scan_nav -p use_sim_time:={use_sim_time}"
-    ready:
-      - message: /scan_nav
-    timeout_s: 30
+localization:
+  # ArUco IDs the EKF may use ([] = every marker found while mapping).
+  aruco_ids: [5, 7, 13, 21, 37]
 
-  # Real robot: odometry from LiDAR scan matching (rf2o_laser_odometry, built from
-  # source in ~/te3003b_ws/src). It publishes /wheel/odom and TF odom -> base_link,
-  # exactly like wheel_odometry, so SLAM and Sendero use it unchanged.
-  # Settings: config/rf2o_puzzlebot.yaml.
-  - name: laser_odometry
-    modes: [real]
-    cmd: "ros2 run rf2o_laser_odometry rf2o_laser_odometry_node --ros-args --params-file {config_dir}/rf2o_puzzlebot.yaml"
-    ready:
-      - message: /wheel/odom
-    timeout_s: 30
-    hint: "Build rf2o on the Jetson: cd ~/te3003b_ws/src && git clone -b ros2 https://github.com/MAPIRlab/rf2o_laser_odometry.git, then colcon build --packages-select rf2o_laser_odometry."
-
-  - name: slam
-    role: slam
-    cmd: "ros2 run planisferio slam --ros-args --params-file {config_dir}/slam_params.yaml -p use_sim_time:={use_sim_time} -p save_dir:={maps_dir} {slam_tuning} {slam_args}"
-    ready:
-      - message: /map
-      - service: /slam/save_map
-    timeout_s: 60
-    hint: "SLAM publishes /map after its first scan: check /laser_scan, /wheel/odom and TF."
-
-  - name: sendero
-    with_previous: true
-    cmd: "ros2 run sendero navigator --ros-args -r __node:=sendero --params-file {config_dir}/sendero_puzzlebot.yaml -p use_sim_time:={use_sim_time} -p cmd_vel_topic:={cmd_vel_in} {sendero_args}"
-    ready:
-      - action: /navigate_to_pose
-      - message: /navigation/status
-    timeout_s: 60
-
-  - name: frontera
-    with_previous: true
-    role: explorer
-    stage: mapping
-    cmd: "ros2 run frontera exploration_manager --ros-args --params-file {config_dir}/frontera_puzzlebot.yaml -p use_sim_time:={use_sim_time} -p cmd_vel_topic:={cmd_vel_in} {frontera_args}"
-    ready:
-      - message: /exploration/status
-    timeout_s: 60
-
-  # ── camera, ArUco and the landmark mapper (both phases) ──────────────────
-  # Real robot: Pi camera + rectification (/camera/image_raw, /camera/image_rect).
-  - name: camera
-    stage: quality
-    modes: [real]
-    critical: false
-    cmd: "ros2 launch main_ros vision.launch.py"
-    ready:
-      - message: /camera/camera_info
-    timeout_s: 40
-
-  - name: aruco_detector
-    stage: quality
-    critical: false
-    cmd: "ros2 run main_ros aruco_detector --ros-args --params-file {config_dir}/aruco_localization.yaml -p image_topic:={image_topic} -p use_sim_time:={use_sim_time}"
-    ready:
-      - node: /aruco_detector
-    timeout_s: 30
-    hint: "Check /camera/image_raw and /camera/camera_info."
-
-  - name: logo_detector
-    stage: quality
-    critical: false
-    cmd: "ros2 run main_ros logo_detector --ros-args -p model:={logo_model} -p image_topic:={image_topic} -p max_rate_hz:=2.0 -p use_sim_time:={use_sim_time}"
-    ready:
-      - node: /logo_detector
-    timeout_s: 60
-    hint: "Set logo_model under modes in this file (.engine, .onnx or .pt)."
-
-  # Puts every ArUco and logo the camera sees on the SLAM map (saved after mapping).
-  - name: landmark_mapper
-    stage: quality
-    critical: false
-    cmd: "ros2 run main_ros landmark_mapper --ros-args -p aruco_config:={config_dir}/aruco_localization.yaml -p use_sim_time:={use_sim_time}"
-    ready:
-      - node: /landmark_mapper
-    timeout_s: 30
-
-  # ── Phase 2: restocking ──────────────────────────────────────────────────
-  # Isaac Sim gives /joint_states; Chris's EKF reads the real robot's encoder topics.
-  - name: encoder_bridge
-    modes: [sim]
-    stage: restocking
-    cmd: "ros2 run main_ros encoder_bridge --ros-args -p use_sim_time:={use_sim_time}"
-    ready:
-      - message: /VelocityEncR
-    timeout_s: 30
-
-  # The EKF on the markers measured while mapping (ekf_landmarks.yaml of the mission folder).
-  - name: ekf
-    stage: restocking
-    critical: false
-    cmd: "ros2 launch main_ros ekf_localization.launch.py start_aruco:=false map:={mission_dir}/ekf_landmarks.yaml"
-    ready:
-      - message: /ekf/status
-    timeout_s: 40
-    hint: "No ekf_landmarks.yaml means no ArUco was found while mapping; Planisferio then needs a pose from Foxglove (2D Pose Estimate)."
-
-  - name: box_far
-    stage: restocking
-    cmd: "ros2 run main_ros box_target --ros-args -r __node:=box_far -p model:={box_far_model} -p settings:={config_dir}/box_far.yaml -p enabled:=false -p max_rate_hz:=5.0 -p image_topic:={image_topic} -p use_sim_time:={use_sim_time}"
-    ready:
-      - node: /box_far
-    timeout_s: 60
-
-  - name: box_target
-    stage: restocking
-    cmd: "ros2 run main_ros box_target --ros-args -p model:={box_near_model} -p enabled:=false -p image_topic:={image_topic} -p use_sim_time:={use_sim_time}"
-    ready:
-      - node: /box_target
-    timeout_s: 60
-
-  - name: qr_reader
-    stage: restocking
-    cmd: "ros2 run main_ros qr_reader --ros-args -p image_topic:={image_topic} -p use_sim_time:={use_sim_time}"
-    ready:
-      - node: /qr_reader
-    timeout_s: 20
-
-  # The forklift teammate's PickBox / SetDownBox server. Until it exists, the
-  # placeholder answers after a few seconds (failures can be injected to test).
-  - name: forklift
-    stage: restocking
-    cmd: "ros2 run main_ros forklift_placeholder --ros-args -p use_sim_time:={use_sim_time}"
-    ready:
-      - action: /forklift/pick_box
-      - action: /forklift/set_down_box
-    timeout_s: 30
-    hint: "Replace the cmd with the teammate's forklift node when it is ready."
-
-  # ── visualization: Foxglove bridge next to the robot software ────────────
-  # The host's Foxglove Studio connects to ws://<robot address>:8765, so the
-  # host PC (ROS 2 Humble) never joins the robot's DDS graph for visualization
-  # (Humble <-> Jazzy discovery is not fully compatible). Optional: if
-  # foxglove_bridge is not installed, the mission continues without it.
-  - name: foxglove_bridge
-    modes: [sim]                 # real robot: the bridge runs on the laptop (host_manager)
-    critical: false
-    cmd: 'ros2 run foxglove_bridge foxglove_bridge --ros-args -r __node:=foxglove_bridge_mission -p port:=8765 -p address:=0.0.0.0 -p send_buffer_limit:=10000000 -p num_threads:=2 -p use_sim_time:={use_sim_time} -p "best_effort_qos_topic_whitelist:=[''^(/tf|/clock|/laser_scan|/slam/scan|/slam/particles|/slam/pose|/wheel/odom|/joint_states|/navigation/local_costmap|/navigation/markers|/scan_nav)$'']"'
-    ready:
-      - node: /foxglove_bridge_mission
-    timeout_s: 20
-    hint: "Install it in the image: ros-jazzy-foxglove-bridge (real robot: ros-humble-foxglove-bridge)."
+ports:
+  pose_max_age_s: 1.0
+  laser_mount: [0.0, 0.0, 0.0]      # LiDAR in base_link (x, y, yaw), as laser_joint in the URDF
+  base_link_height: 0.047
+  # camera_mount comes from config/aruco_localization.yaml (the EKF's calibration)
+  motion:                           # our own straight drives and turns (odometry)
+    drive_speed: 0.06               # m/s
+    turn_speed: 0.5                 # rad/s
+    center_gain: 1.5                # inside a trailer: keep centered between the side walls
+  topics:                           # defaults in restock_ports.py; cmd_vel and scan come
+    slam_pose: /slam/pose           # from program_manager.yaml (cmd_vel_in, scan_raw)
+    ekf_pose: /ekf/pose
+    ekf_status: /ekf/status
+    odom: /wheel/odom
+    camera_info: /camera/camera_info
+    box_far: [/box_far/target, /box_far/enable]
+    box_target: [/box_target/target, /box_target/enable]
+    qr: [/qr_reader/codes, /qr_reader/enable]
+    logos: [/logo_detector/detections, /logo_detector/enable]
