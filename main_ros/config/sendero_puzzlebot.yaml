@@ -42,7 +42,7 @@
 
     obstacle_max_range: 4.0
 
-    profile_names: [exploration, transport, carrying]
+    profile_names: [exploration, transport, carrying, patrol]
     default_profile: exploration          # Frontera sends behavior_tree = ""
     profiles:
       exploration:
@@ -56,3 +56,11 @@
         max_vel_theta: 0.6
         acc_lim_x: 0.25
         acc_lim_theta: 0.8
+      # Stage-2 tour and stage-4 route: many short stops at viewpoints. Slow down only
+      # over the last 0.2 m and accept the goal a little earlier, so each stop is quick;
+      # 20 degrees of heading is well inside the camera's +-30 degrees.
+      patrol:
+        allow_unknown: false
+        approach_distance: 0.2
+        xy_goal_tolerance: 0.2
+        yaw_goal_tolerance: 0.35

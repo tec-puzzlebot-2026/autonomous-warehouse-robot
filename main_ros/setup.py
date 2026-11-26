@@ -69,6 +69,10 @@ setup(
             os.path.join('share', package_name, 'config'),
             glob('config/*.yaml') + glob('config/*.urdf')
         ),
+        (
+            os.path.join('share', package_name, 'config', 'forklift'),
+            glob('config/forklift/*.json')
+        ),
 
     ],
 
@@ -211,6 +215,9 @@ setup(
             'forklift_controller = main_ros.manipulation.control_forklift.controller:main',
             'forklift_operate = main_ros.manipulation.control_forklift.operate:main',
             'forklift_pick_back = main_ros.manipulation.control_forklift.pick_back:main',
+            # PickBox / SetDownBox -> forklift_pick_back; Isaac lift in place of the Tang
+            'forklift_bridge = main_ros.manipulation.forklift_bridge:main',
+            'sim_forklift = main_ros.manipulation.sim_forklift:main',
 
             # Isaac Sim /joint_states -> /VelocityEncL, /VelocityEncR (for the EKF)
             'encoder_bridge = main_ros.simulation.encoder_bridge:main',

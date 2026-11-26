@@ -12,8 +12,8 @@
 # =============================================================================
 
 map_quality:                 # stage 2 (optional): improve the map, find markers and logos
-  profile: transport         # Sendero profile of the tour
-  dwell_s: 1.5               # stand still at every viewpoint (the landmark mapper only
+  profile: patrol            # Sendero profile of the tour (quick stops, sendero_puzzlebot.yaml)
+  dwell_s: 0.8               # stand still at every viewpoint (the landmark mapper only
                              # uses sightings taken while the robot is still)
   passes: 1                  # times round the whole map (2 = more loop closures, slower)
   return_to_start: true      # every pass ends where it began: Planisferio closes the loop
@@ -25,8 +25,8 @@ map_quality:                 # stage 2 (optional): improve the map, find markers
     fov: 60.0
 
 route_drive:                 # stage 4 with restock_mode: route_only (program_manager.yaml)
-  profile: transport         # Sendero profile
-  dwell_s: 1.0               # stand still at every viewpoint (where the camera will look)
+  profile: patrol            # Sendero profile (quick stops, sendero_puzzlebot.yaml)
+  dwell_s: 0.3               # stand still at every viewpoint (no camera in route-only mode)
   nav_timeout_s: 120.0       # per viewpoint; a failed one is retried once, then skipped
   return_to_start: true      # end where stage 4 started
   laps: 1                    # times round the whole route
@@ -36,10 +36,11 @@ restock:
 
   # ── robot and box geometry ────────────────────────────────────────────────
   # Gaps are measured from the robot's FRONT to the box face.
-  robot_front_x: 0.12        # m, base_link (wheel axle) -> front of the robot. MEASURE.
+  robot_front_x: 0.18        # m, base_link (wheel axle) -> fork tips (pick_sim.json fork_reach_m)
   inspect_gap: 0.25          # m, while reading a face (the whole face in the image)
   align_gap: 0.20            # m, aligned pose: camera and LiDAR still see the face
-  ready_gap: 0.07            # m, handed to the forklift (PickBox); the last 13 cm by odometry
+  ready_gap: 0.10            # m, fork tips -> box face when PickBox starts: the axle is then
+                             # 0.28 m from the face, inside pick_back's 0.218..0.368 m window
   carry_gap: 0.02            # m, a carried box: robot front -> box face
   back_off: 0.20             # m, reverse after a pick or after a set-down on the floor
   align_yaw_tol_deg: 5.0     # parallel to the face within this (LiDAR, floor boxes)
@@ -51,7 +52,8 @@ restock:
   box_width: 0.12            # m (the face the forklift picks and the QR faces)
   box_depth: 0.10
   box_height: 0.12           # the box's height in pixels gives its distance
-  level_heights: [0.0, 0.19, 0.38]   # floor, rack level 1, rack level 2 (MEASURE level 2)
+  level_heights: [0.0, 0.02, 0.20]   # floor, rack shelf 1, rack shelf 2 (the forklift
+                                     # bench's rack; pick_back picks floor and shelf 1)
 
   # ── vision timing ─────────────────────────────────────────────────────────
   look_settle_s: 0.6         # after stopping / switching a detector, before frames count
@@ -70,7 +72,8 @@ restock:
   max_boxes_per_view: 6
 
   # ── navigation (Sendero profiles from sendero_puzzlebot.yaml) ─────────────
-  profile_patrol: transport
+  profile_patrol: transport        # to boxes, faces and docks: precise stops
+  profile_viewpoint: patrol        # route and survey viewpoints: quick stops
   profile_carrying: carrying
   nav_timeout_s: 120.0
   align_timeout_s: 45.0

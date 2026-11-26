@@ -375,6 +375,19 @@ def test_full_run_delivers_floor_and_rack_boxes(tmp_path):
         assert len(on - {'qr'}) <= 1, on
 
 
+def test_viewpoints_use_the_quick_profile_and_boxes_the_precise_one(tmp_path):
+    s = rc.RestockSettings(look_settle_s=0.2, look_s=0.5, read_s=0.5, acquire_s=0.4,
+                           logo_look_s=0.4, survey=False, profile_viewpoint='patrol')
+    core, ports = make_core(tmp_path, [box_against_left_wall('walnut')], settings=s)
+    run(core, ports)
+    assert core.done and core.outcome.startswith('COMPLETE'), core.outcome
+    profiles = {c[2] for c in ports.calls if c[0] == 'nav'}
+    assert 'patrol' in profiles                            # route viewpoints
+    assert profiles - {'patrol'}                           # box faces / docks: the others
+    route = {tuple(round(v, 2) for v in vp) for vp in core.route}
+    assert all(c[2] == 'patrol' for c in ports.calls if c[0] == 'nav' and c[1] in route)
+
+
 def test_qr_on_a_side_face_is_found_by_visiting_faces(tmp_path):
     b = SimBox(3.0, 0.05 + 0.05, math.pi / 2, 0, 'soriene', qr_face='left')   # bottom wall, faces +y
     core, ports = make_core(tmp_path, [b])

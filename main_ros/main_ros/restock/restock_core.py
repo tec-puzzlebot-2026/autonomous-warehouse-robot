@@ -109,8 +109,9 @@ class RestockSettings:
     refine_jump: float = 0.25          # m, near estimate this far from the far one: re-approach
     max_boxes_per_view: int = 6
     # Navigation.
-    profile_patrol: str = 'transport'
+    profile_patrol: str = 'transport'     # driving to boxes, faces and docks (precise)
     profile_carrying: str = 'carrying'
+    profile_viewpoint: str = ''           # route / survey viewpoints ('' = profile_patrol)
     nav_timeout_s: float = 120.0
     align_timeout_s: float = 45.0
     drive_timeout_s: float = 20.0
@@ -438,6 +439,11 @@ class RestockCore:
         else:
             self._goto('LOCALIZE')
 
+    def _viewpoint_profile(self):
+        """Sendero profile for the route and survey viewpoints: quick stops (patrol in
+        sendero_puzzlebot.yaml); boxes, faces and docks keep profile_patrol."""
+        return self.s.profile_viewpoint or self.s.profile_patrol
+
     def _after_localize(self):
         missing = [c for c in self.s.companies if c not in self.world.docks]
         return 'SURVEY_PLAN' if (missing and self.s.survey) else 'PLAN_ROUTE'
@@ -614,7 +620,7 @@ class RestockCore:
             self._event(reason)
             self.survey_idx += 1
             self._goto('SURVEY_GO')
-        self._nav(pose, self.s.profile_patrol, lambda: self._goto('SURVEY_LOOK'), skip,
+        self._nav(pose, self._viewpoint_profile(), lambda: self._goto('SURVEY_LOOK'), skip,
                   'survey viewpoint')
 
     def _enter_SURVEY_LOOK(self):
@@ -699,8 +705,8 @@ class RestockCore:
             self._event(f'viewpoint {self.idx + 1} skipped ({reason})')
             self.idx += 1
             self._goto('PATROL_GO')
-        self._nav(self.route[self.idx], self.s.profile_patrol, lambda: self._goto('PATROL_LOOK'),
-                  skip, f'viewpoint {self.idx + 1}')
+        self._nav(self.route[self.idx], self._viewpoint_profile(),
+                  lambda: self._goto('PATROL_LOOK'), skip, f'viewpoint {self.idx + 1}')
 
     def _enter_PATROL_LOOK(self):
         self.detail = f'Patrol: looking for boxes at viewpoint {self.idx + 1}/{len(self.route)}'
@@ -765,8 +771,8 @@ class RestockCore:
             self._event(reason)
             self.idx += 1
             self._goto('PATROL_GO')
-        self._nav(self.route[self.idx], self.s.profile_patrol, lambda: self._goto('PATROL_LOOK'),
-                  skip, 'back to the route')
+        self._nav(self.route[self.idx], self._viewpoint_profile(),
+                  lambda: self._goto('PATROL_LOOK'), skip, 'back to the route')
 
     # =====================================================================
     # BOX TASK: approach, acquire, inspect faces
