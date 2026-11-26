@@ -1,0 +1,6 @@
+FROM ray/puzzlebot-ros2:jazzy-nav2
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3-opencv python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+RUN python3 -m pip install --break-system-packages onnxruntime
