@@ -40,11 +40,14 @@ import collections
 import math
 import os
 import time
+
+import numpy as np
 from dataclasses import asdict, dataclass, field
 
 from main_ros.restock import geometry as G
 from main_ros.restock import mission_store as ms
 from main_ros.restock.docks import Dock, find_docks, free_area_near
+from main_ros.restock.zones import Zone, ZoneConfig, drop_zone, zones_from_markers
 from main_ros.restock.geometry import wrap
 from main_ros.restock.grid import OccupancyMap
 from main_ros.restock.route import RouteConfig, plan_route
@@ -103,6 +106,9 @@ class RestockSettings:
     qr_pair_dt: float = 0.3            # s, QR and box outline must come from ~ the same frame
     logo_min_conf: float = 0.6
     require_logo: bool = False         # True: enter a dock only after its logo was seen
+    # Where boxes go: 'docks' = the company's dock (the drop zone only when there is
+    # none, or the QR cannot be read); 'drop_zone' = every box to the drop zone.
+    deliver_to: str = 'docks'
     # Box selection.
     max_far_range: float = 3.0         # m, farther sightings are ignored (seen again later)
     dup_radius: float = 0.20           # m, a sighting this close to a known box is that box
@@ -175,8 +181,10 @@ class Box:
 class World:
     """Everything Phase 2 knows about the arena (from the mission folder)."""
 
-    def __init__(self, folder, grid, docks, logos, markers, route_cfg):
+    def __init__(self, folder, grid, docks, logos, markers, route_cfg, zones=()):
         self.folder = folder
+        self.zones = list(zones)               # [Zone], one per ArUco (zones.py)
+        self.drop_zone = drop_zone(self.zones)
         self.grid = grid
         self.docks = dict(docks)               # company -> Dock
         self.logos = dict(logos)               # company -> (x, y, view_yaw)
@@ -186,7 +194,7 @@ class World:
         self.dropped = []                      # (x, y) of boxes left on the floor
 
     @classmethod
-    def from_folder(cls, folder, route_cfg):
+    def from_folder(cls, folder, route_cfg, zone_cfg=None):
         grid = OccupancyMap.from_files(os.path.join(folder, ms.MAP_YAML))
         saved = ms.read_yaml(os.path.join(folder, ms.DOCKS), {}) or {}
         docks = {d['company']: Dock.from_dict(d) for d in saved.get('docks', [])}
@@ -194,7 +202,12 @@ class World:
         for lg in (ms.read_yaml(os.path.join(folder, ms.LOGOS), {}) or {}).get('logos', []):
             logos[lg['id']] = (lg['x'], lg['y'], lg.get('yaw'))
         markers = (ms.read_yaml(os.path.join(folder, ms.LANDMARKS), {}) or {}).get('markers', [])
-        return cls(folder, grid, docks, logos, markers, route_cfg)
+        saved_zones = (ms.read_yaml(os.path.join(folder, ms.ZONES), {}) or {}).get('zones')
+        if saved_zones is not None:
+            zones = [Zone.from_dict(z) for z in saved_zones]
+        else:                                   # an older mission folder: work them out now
+            zones = zones_from_markers(grid, markers, zone_cfg)
+        return cls(folder, grid, docks, logos, markers, route_cfg, zones)
 
     def free_spot(self, spec):
         """Where to set a box down near the docks, avoiding boxes already left there."""
@@ -209,6 +222,17 @@ class World:
                         wx, wy = self.grid.cell_to_world(r, c)
                         if math.hypot(wx - x, wy - y) <= clear_r:
                             trav[r, c] = False
+        z = self.drop_zone
+        if z is not None:                               # inside the drop zone
+            inner = trav.copy()
+            rr, cc = np.nonzero(inner)
+            for r, c in zip(rr, cc):
+                if not z.contains(*self.grid.cell_to_world(r, c), margin=0.15):
+                    inner[r, c] = False
+            spot = free_area_near(self.grid, inner, [z.center], radius_needed=0.0,
+                                  search=z.size)
+            if spot is not None:
+                return spot
         pts = [d.entrance[:2] for d in self.docks.values()] or [self._center()]
         return free_area_near(self.grid, trav, pts)
 
@@ -217,6 +241,9 @@ class World:
         return (0.5 * (x0 + x1), 0.5 * (y0 + y1))
 
     def in_dock(self, x, y):
+        """Inside a dock or the drop zone: a box there is delivered, not to be picked."""
+        if self.drop_zone is not None and self.drop_zone.contains(x, y):
+            return True
         return any(d.contains(x, y) for d in self.docks.values())
 
     def reachable(self, pose):
@@ -227,8 +254,9 @@ class World:
 class RestockCore:
     """Phase-2 state machine. Call start(), then tick() at ~10 Hz."""
 
-    def __init__(self, ports, settings=None, mission='restocking', folder=None):
+    def __init__(self, ports, settings=None, mission='restocking', folder=None, zone_cfg=None):
         self.p = ports
+        self.zone_cfg = zone_cfg or ZoneConfig()      # older mission folders without zones.yaml
         self.s = settings or RestockSettings()
         self.mission = mission                  # 'restocking' (map loaded) or 'full'
         self.folder = folder
@@ -422,7 +450,7 @@ class RestockCore:
         self.detail = 'Loading the mission folder...'
         try:
             folder = self.folder or self.p.mission_folder()
-            self.world = World.from_folder(folder, self.route_cfg)
+            self.world = World.from_folder(folder, self.route_cfg, self.zone_cfg)
         except (OSError, ValueError, KeyError, TypeError) as exc:
             self._hold_error(f'cannot load the mission folder: {exc}', 'LOAD')
             return
@@ -433,7 +461,12 @@ class RestockCore:
         w = self.world
         missing = [c for c in self.s.companies if c not in w.docks]
         self._event(f'mission folder {self.folder}: {len(w.markers)} markers, '
-                    f'docks {sorted(w.docks)}' + (f', NO dock for {missing}' if missing else ''))
+                    f'docks {sorted(w.docks)}' + (f', NO dock for {missing}' if missing else '')
+                    + (f', drop zone at ({w.drop_zone.center[0]:.2f}, '
+                       f'{w.drop_zone.center[1]:.2f})' if w.drop_zone else ', NO drop zone'))
+        show = getattr(self.p, 'show_zones', None)
+        if show:
+            show(w.zones)
         if self.mission == 'full' or self.p.slam_localized():
             self._goto(self._after_localize())
         else:
@@ -1046,6 +1079,9 @@ class RestockCore:
     def _enter_DELIVER_GO(self, dock=None, tried=()):
         box = self.box
         self._vision()
+        if self.s.deliver_to == 'drop_zone' and self.world.drop_zone is not None:
+            self._goto('FLOOR_GO', why='to the drop zone')
+            return
         if box.company is None or box.company not in self.world.docks:
             why = 'data missing' if box.company is None else f'no dock known for {box.company}'
             self._goto('FLOOR_GO', why=why)
@@ -1181,7 +1217,10 @@ class RestockCore:
             return
         self.ph['why'] = why
         centroid = [d.entrance[:2] for d in self.world.docks.values()]
-        if centroid:
+        z = self.world.drop_zone
+        if z is not None and z.contains(*spot):
+            heading = wrap(z.yaw + math.pi)              # from the arena toward the wall
+        elif centroid:
             cx = sum(p[0] for p in centroid) / len(centroid)
             cy = sum(p[1] for p in centroid) / len(centroid)
             heading = math.atan2(spot[1] - cy, spot[0] - cx)
@@ -1189,8 +1228,9 @@ class RestockCore:
             heading = 0.0
         d = self.s.robot_front_x + self.s.carry_gap + self.spec.depth / 2
         pose = (spot[0] - d * math.cos(heading), spot[1] - d * math.sin(heading), heading)
-        self._event(f'{box.id}: {why}: taking it to the free area ({spot[0]:.2f}, {spot[1]:.2f})')
-        self.detail = f'{box.id}: to the free area ({why})'
+        where = 'drop zone' if z is not None and z.contains(*spot) else 'free area'
+        self._event(f'{box.id}: {why}: taking it to the {where} ({spot[0]:.2f}, {spot[1]:.2f})')
+        self.detail = f'{box.id}: to the {where} ({why})'
         self._nav(pose, self.s.profile_carrying,
                   lambda: self._goto('SET_DOWN', where='floor', spot=spot),
                   lambda r: self._hold_error(f'{box.id}: cannot reach the free area ({r})',
@@ -1202,8 +1242,12 @@ class RestockCore:
 
     def _floor_next(self):
         box = self.box
+        if self.s.deliver_to == 'drop_zone' and self.world.drop_zone is not None:
+            self._box_end('delivered', 'left in the drop zone')
+            return
         if box.company is not None:                       # no dock for it: leave it here
-            self._box_end('no_dock', f'left in the free area (no dock for {box.company})')
+            where = 'drop zone' if self.world.drop_zone is not None else 'free area'
+            self._box_end('no_dock', f'left in the {where} (no dock for {box.company})')
             return
         pose = self.p.slam_pose()
         box.yaw = math.atan2(pose[1] - box.y, pose[0] - box.x)

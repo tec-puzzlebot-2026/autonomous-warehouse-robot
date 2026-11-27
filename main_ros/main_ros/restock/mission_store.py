@@ -31,6 +31,7 @@ LOGOS = 'logos.yaml'
 DOCKS = 'docks.yaml'
 EKF = 'ekf_landmarks.yaml'
 ROUTE = 'route.yaml'
+ZONES = 'zones.yaml'
 LOG = 'mission_log.yaml'
 
 
@@ -194,18 +195,20 @@ class MissionLog:
 
 
 def save_mission_folder(store, saved_base, landmarks, ekf_template, companies,
-                        localization_ids=(), ekf_overrides=None):
+                        localization_ids=(), ekf_overrides=None, zone_cfg=None):
     """Everything Phase 2 needs, written at the end of mapping.
 
     store: MissionStore. saved_base: what Planisferio's save_map wrote (<base>.pgm ...).
     landmarks: the landmark mapper's last JSON ({'markers': [...], 'logos': [...]}).
     ekf_template: the ros__parameters of config/arena_map.yaml (filter settings).
     companies: the company names; localization_ids: ArUco IDs the EKF may use ([] = all).
+    zone_cfg: zones.ZoneConfig (the square in front of every marker, ID 21 = drop zone).
 
     Returns (folder, summary dict). The folder becomes <root>/latest.
     """
     from main_ros.restock.docks import find_docks
     from main_ros.restock.grid import OccupancyMap
+    from main_ros.restock.zones import drop_zone, zones_from_markers
 
     folder = store.new_folder()
     copied = copy_map_files(saved_base, folder)
@@ -213,6 +216,7 @@ def save_mission_folder(store, saved_base, landmarks, ekf_template, companies,
         raise FileNotFoundError(f'no map at {saved_base}.yaml')
     landmarks = landmarks or {}
     markers = list(landmarks.get('markers', []))
+    all_markers = list(markers)
     if localization_ids:
         ids = {int(i) for i in localization_ids}
         markers = [m for m in markers if int(m['id']) in ids]
@@ -223,6 +227,8 @@ def save_mission_folder(store, saved_base, landmarks, ekf_template, companies,
     docks = find_docks(grid, {lg['id']: (lg['x'], lg['y'], lg.get('yaw')) for lg in logos})
     write_yaml(os.path.join(folder, DOCKS), {'docks': [docks[c].to_dict() for c in companies
                                                        if c in docks]})
+    zones = zones_from_markers(grid, all_markers, zone_cfg)
+    write_yaml(os.path.join(folder, ZONES), {'zones': [z.to_dict() for z in zones]})
     x0, x1, y0, y1 = grid.bounds()
     if markers:
         write_yaml(os.path.join(folder, EKF),
@@ -231,5 +237,7 @@ def save_mission_folder(store, saved_base, landmarks, ekf_template, companies,
     summary = {'folder': folder, 'markers': [int(m['id']) for m in markers],
                'logos': [lg['id'] for lg in logos], 'docks': sorted(docks),
                'missing_docks': [c for c in companies if c not in docks],
+               'zones': [z.label for z in zones],
+               'drop_zone': drop_zone(zones) is not None,
                'session': SESSION in copied}
     return folder, summary

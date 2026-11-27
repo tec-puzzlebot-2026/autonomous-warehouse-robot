@@ -440,12 +440,15 @@ class ProgramManager(Node):
         overrides = {'search_rotation': False,
                      'cmd_vel_topic': self.placeholders.get('cmd_vel_in', '/cmd_vel')}
         try:
+            from main_ros.restock.zones import ZoneConfig
+            zone_cfg = ZoneConfig.from_dict(self.restock_cfg.get('zones'))
             folder, info = ms.save_mission_folder(self.store, base, self.landmarks_json, template,
-                                                  companies, ids, overrides)
+                                                  companies, ids, overrides, zone_cfg)
         except (OSError, ValueError, KeyError) as exc:
             return False, str(exc), None
         self._use_mission_folder(folder)
-        text = (f'{folder} (markers {info["markers"]}, docks {info["docks"]}'
+        text = (f'{folder} (markers {info["markers"]}, zones {info["zones"]}, '
+                f'docks {info["docks"]}'
                 + (f', NO dock for {info["missing_docks"]}' if info['missing_docks'] else '')
                 + ('' if info['session'] else ', no Planisferio session!') + ')')
         if not info['markers']:
@@ -473,7 +476,9 @@ class ProgramManager(Node):
         """Stage 4: the restocking state machine."""
         from main_ros.restock.restock_core import RestockCore, RestockSettings
         settings = RestockSettings.from_dict(self.restock_cfg.get('restock', {}))
-        return RestockCore(self._ports(), settings, mission, folder or self.mission_folder)
+        from main_ros.restock.zones import ZoneConfig
+        return RestockCore(self._ports(), settings, mission, folder or self.mission_folder,
+                           ZoneConfig.from_dict(self.restock_cfg.get('zones')))
 
     def make_route_drive(self, folder):
         """Stage 4 with restock_mode: route_only: drive the stage-3 route, nothing else."""
@@ -505,10 +510,11 @@ class ProgramManager(Node):
                 return False, f'cannot read the map in {folder}'
             goals, r = tour.plan(grid, start)
             if not goals:
-                return False, 'no edge to drive along on this map'
+                return False, 'no room to drive a loop on this map'
             self._ports().show_route(goals, 'tour_preview')
-            msg = (f'stage-2 tour preview on /restock/route_markers: {len(goals)} goals, '
-                   f'{r.length:.1f} m per pass, {100 * r.coverage:.0f} % of the edges')
+            msg = (f'stage-2 tour preview on /restock/route_markers: {r["loops"]} loops '
+                   f'({r["inner_loops"]} round obstacles), {len(goals)} waypoints, '
+                   f'{r["length_m"]:.1f} m per pass')
             self._log_line(msg)
             return True, msg
         job.run(work)

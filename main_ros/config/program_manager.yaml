@@ -292,7 +292,7 @@ steps:
   - name: landmark_mapper
     stage: quality
     critical: false
-    cmd: "ros2 run main_ros landmark_mapper --ros-args -p aruco_config:={config_dir}/{aruco_config} -p use_sim_time:={use_sim_time}"
+    cmd: "ros2 run main_ros landmark_mapper --ros-args -p aruco_config:={config_dir}/{aruco_config} -p restock_config:={config_dir}/restock.yaml -p use_sim_time:={use_sim_time}"
     ready:
       - node: /landmark_mapper
     timeout_s: 30

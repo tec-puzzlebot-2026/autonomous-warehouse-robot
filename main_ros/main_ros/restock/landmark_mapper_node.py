@@ -19,6 +19,9 @@ Subscribes  /aruco/detections (JSON), /logo_detector/detections (JSON),
 Publishes   ~/landmarks (std_msgs/String, JSON, 1 Hz):
               {"markers": [{"id", "x", "y", "yaw", "sightings", "spread_m"}],
                "logos":   [{"id": company, "x", "y", "yaw", "sightings", "spread_m"}]}
+            ~/zones (visualization_msgs/MarkerArray, latched): a size_m square in
+              front of every marker, labeled by its ID (ID 21: the DROP ZONE;
+              restock/zones.py, settings in restock.yaml, section zones)
 Services    ~/reset (std_srvs/Trigger): forget everything (a new map was started)
 
 The Program Manager reads ~/landmarks when it saves the mission folder.
@@ -41,10 +44,13 @@ from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import CameraInfo
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
+from visualization_msgs.msg import MarkerArray
 
 from main_ros.restock.geometry import Camera, transform_point, wrap
 from main_ros.restock.grid import OccupancyMap
 from main_ros.restock.landmarks import LandmarkSet, marker_yaw_from_optical
+from main_ros.restock.zone_viz import zone_markers
+from main_ros.restock.zones import ZoneConfig, zones_from_markers
 
 
 def yaw_of(q):
@@ -97,6 +103,15 @@ class LandmarkMapper(Node):
         self.create_subscription(String, p('logo_topic', '/logo_detector/detections').value,
                                  self.on_logos, 20)
         self.pub = self.create_publisher(String, '~/landmarks', 10)
+        restock_cfg = p('restock_config', '').value
+        self.zone_cfg = ZoneConfig()
+        if restock_cfg and os.path.isfile(os.path.expanduser(restock_cfg)):
+            with open(os.path.expanduser(restock_cfg)) as f:
+                self.zone_cfg = ZoneConfig.from_dict((yaml.safe_load(f) or {}).get('zones'))
+        self.zone_pub = self.create_publisher(MarkerArray, '~/zones', latched)
+        self.zones = []
+        self.zone_key = None            # (markers rounded, time) of the last zone update
+        self.zone_t = 0.0
         self.create_service(Trigger, '~/reset', self.on_reset)
         self.create_timer(1.0, self.publish)
         self.get_logger().info(f'landmark mapper: camera mount {self.mount}')
@@ -170,11 +185,37 @@ class LandmarkMapper(Node):
                             'logos': {k: v.count for k, v in self.logos.items.items()}}}
 
     def publish(self):
-        self.pub.publish(String(data=json.dumps(self.snapshot())))
+        snap = self.snapshot()
+        self.pub.publish(String(data=json.dumps(snap)))
+        self.update_zones(snap['markers'])
+
+    def update_zones(self, markers):
+        """Zones of the markers found so far: recomputed when a marker moves or every 10 s
+        (the map grows), published only when they change."""
+        if self.grid is None:
+            return
+        key = tuple(sorted((int(m['id']), round(m['x'], 2), round(m['y'], 2)) for m in markers))
+        now = time.monotonic()
+        if key == self.zone_key and now - self.zone_t < 10.0:
+            return
+        self.zone_key, self.zone_t = key, now
+        zones = zones_from_markers(self.grid, markers, self.zone_cfg)
+        new = [z.to_dict() for z in zones]
+        if new == [z.to_dict() for z in self.zones] and self.zones:
+            return
+        for z in zones:
+            if z.label not in [o.label for o in self.zones]:
+                self.get_logger().info(f'zone {z.label} (ArUco {z.marker_id}) at '
+                                       f'({z.center[0]:.2f}, {z.center[1]:.2f}), '
+                                       f'{100 * z.inside:.0f} % inside the map')
+        self.zones = zones
+        self.zone_pub.publish(zone_markers(zones, self.get_clock().now().to_msg()))
 
     def on_reset(self, request, response):
         self.markers.items.clear()
         self.logos.items.clear()
+        self.zones, self.zone_key = [], None
+        self.zone_pub.publish(zone_markers([], self.get_clock().now().to_msg()))
         response.success, response.message = True, 'landmarks cleared'
         self.get_logger().info(response.message)
         return response

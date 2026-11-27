@@ -153,15 +153,13 @@ def age_word(age, fresh=3.0):
 def tour_rows(t, C):
     """Rows of the stage-2 map tour (5)."""
     text, green, amber, bold = C['text'], C['green'], C['amber'], C['bold']
-    cov = t.get('coverage')
     marks = t.get('markers') or []
     logos = t.get('logos') or []
     return [
         ('goal', f'{t.get("goal", 0)}/{t.get("goals", 0)}'
                  + (' · paused' if t.get('paused') else ''), bold),
         ('skipped', t.get('skipped', 0), amber if t.get('skipped') else green),
-        ('edges', f'{100 * cov:.0f} % · {t.get("length_m", 0)} m' if cov is not None else '–',
-         text),
+        ('loops', f'{t.get("loops", 0)} · {t.get("length_m", 0)} m per pass', text),
         ('ArUco', ', '.join(str(m) for m in marks) or 'none yet', green if marks else amber),
         ('logos', ', '.join(str(lg) for lg in logos) or 'none yet', green if logos else amber),
     ]

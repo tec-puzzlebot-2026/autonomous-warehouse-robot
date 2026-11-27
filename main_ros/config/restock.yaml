@@ -12,23 +12,21 @@
 # =============================================================================
 
 map_quality:                 # stage 2 (optional): improve the map, find markers and logos
+  # Closed LOOPS (restock/loop_tour.py): round the whole arena along the walls, then
+  # round every obstacle / row of racks, each back to where it began, then back to the
+  # start. Coming back to places mapped long before lets Planisferio close loops.
   profile: patrol            # Sendero profile of the tour (quick stops, sendero_puzzlebot.yaml)
-  dwell_s: 0.8               # stand still at every viewpoint (the landmark mapper only
+  dwell_s: 0.8               # stand still at every waypoint (the landmark mapper only
                              # uses sightings taken while the robot is still)
-  passes: 1                  # times round the whole map (2 = more loop closures, slower)
-  return_to_start: true      # the viewpoints form one closed loop that ends at the start
-  # Loop closures (Planisferio straightens the map when it comes back to an old place):
-  # every loop_every_m driven, detour back to an earlier viewpoint within loop_radius_m
-  # (driving) that was left at least loop_min_m ago. loop_every_m: 0 = no detours.
-  loop_every_m: 3.0
-  loop_min_m: 3.0
-  loop_radius_m: 2.0
-  nav_timeout_s: 120.0
-  route:                     # viewpoints along every edge (restock/route.py RouteConfig)
-    view_range: 2.0          # m, the camera sees markers farther than the box detector
-    standoff_min: 0.40
-    standoff_max: 0.90
-    fov: 60.0
+  passes: 1                  # times round all the loops (2 = more loop closures, slower)
+  return_to_start: true
+  ring_clearance: 0.5        # m from walls and obstacles to the loops (lowered by itself
+                             # if a narrow passage would cut the arena in two)
+  spacing: 0.8               # m between waypoints along a loop
+  face_walls: true           # outer loop: turn to the nearest wall at every stop (camera
+                             # sees the ArUco markers and logos); false = drive straight on
+  inner_loops: true          # also loop round the obstacles inside the arena
+  nav_timeout_s: 60.0        # per waypoint; a failed one is retried once, then skipped
 
 route_drive:                 # stage 4 with restock_mode: route_only (program_manager.yaml)
   profile: patrol            # Sendero profile (quick stops, sendero_puzzlebot.yaml)
@@ -70,6 +68,9 @@ restock:
   qr_pair_dt: 0.3            # s, a QR and the box outline must come from about the same frame
   logo_min_conf: 0.6
   require_logo: false        # true: never enter a dock whose logo was not seen
+  # Where boxes go: docks = the company's dock (the drop zone when it has none or the QR
+  # cannot be read); drop_zone = every box to the drop zone (zones, below).
+  deliver_to: docks
 
   # ── which box ────────────────────────────────────────────────────────────
   max_far_range: 3.0         # m, farther sightings are ignored (seen again from a closer viewpoint)
@@ -111,6 +112,14 @@ restock:
     view_range: 1.2          # m, edges farther than this do not count as seen
     fov: 60.0                # deg, horizontal field of view used for coverage
     target_coverage: 0.98
+
+zones:                       # a square on the floor in front of every ArUco marker found
+  # (restock/zones.py): shown in Foxglove on /landmark_mapper/zones (live) and
+  # /restock/zones (restocking), saved in the mission folder (zones.yaml). It starts at
+  # the marker's wall and is slid along it so it stays on the map's free floor.
+  size_m: 1.0
+  labels:                    # ArUco id -> zone name; every other marker is aruco_<id>
+    21: drop_zone            # where restocking sets boxes down (deliver_to above)
 
 localization:
   # ArUco IDs the EKF may use ([] = every marker found while mapping).

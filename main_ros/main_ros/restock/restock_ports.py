@@ -52,6 +52,7 @@ DEFAULT_TOPICS = {
     'landmarks': '/landmark_mapper/landmarks',
     'cmd_vel': '/cmd_vel',
     'route_markers': '/restock/route_markers',   # the planned tour / route (Foxglove, RViz)
+    'zone_markers': '/restock/zones',            # the ArUco zones of the mission (drop zone)
     # stream: (output topic, enable topic)
     'box_far': ['/box_far/target', '/box_far/enable'],
     'box_target': ['/box_target/target', '/box_target/enable'],
@@ -233,8 +234,9 @@ class RestockPorts:
             from visualization_msgs.msg import Marker, MarkerArray
             self._marker_cls = (Marker, MarkerArray)
             self.route_pub = node.create_publisher(MarkerArray, t['route_markers'], latched)
+            self.zone_pub = node.create_publisher(MarkerArray, t['zone_markers'], latched)
         except ImportError:
-            self._marker_cls = self.route_pub = None
+            self._marker_cls = self.route_pub = self.zone_pub = None
 
         self.buffers = {s: collections.deque(maxlen=80) for s in STREAMS}
         for s in STREAMS:
@@ -534,6 +536,13 @@ class RestockPorts:
             n.text = str(i + 1)
             arr.markers.append(n)
         self.route_pub.publish(arr)
+
+    def show_zones(self, zones):
+        """Publish the mission's ArUco zones (drop zone green) on /restock/zones."""
+        if self.zone_pub is None:
+            return
+        from main_ros.restock.zone_viz import zone_markers
+        self.zone_pub.publish(zone_markers(zones, self.node.get_clock().now().to_msg()))
 
     def _fresh(self, value):
         pose, t = value

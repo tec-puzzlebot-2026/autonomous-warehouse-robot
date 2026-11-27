@@ -83,25 +83,49 @@ def run(tour, p, seconds=2000.0, dt=0.1):
         p.t = round(p.t + dt, 3)
 
 
-def test_tour_visits_every_viewpoint_and_returns_to_the_start():
+def test_tour_drives_every_waypoint_and_returns_to_the_start():
     p = Ports()
     tour = MapTour(p, TourSettings(dwell_s=1.0))
     tour.start(RW.make_world())
     n = len(tour.goals)
     assert n > 10
-    assert tour.goals[-1] == (0.6, 0.6, 0.0)               # back to the start: a loop
+    assert tour.goals[-1] == (0.6, 0.6, 0.0)               # back to the start
     run(tour, p)
     assert tour.done and 'tour complete' in tour.outcome and tour.skipped == 0
     assert len(p.goals) == n
-    # the robot stood still dwell_s at each goal before driving on
     gaps = [b[1] - a[1] for a, b in zip(p.goals, p.goals[1:])]
     assert min(gaps) >= 1.0 + 1.0 - 1e-6                   # 1 s driving + 1 s dwell
     assert tour.snapshot()['markers'] == [7]
 
 
+def test_the_tour_is_closed_loops_round_the_arena_and_the_obstacles():
+    from main_ros.restock.loop_tour import LoopConfig, plan_loops
+    grid = RW.make_world()
+    goals, info = plan_loops(grid, (0.6, 0.6, 0.0), LoopConfig(face_walls=False))
+    assert info['loops'] >= 2 and info['inner_loops'] >= 1   # the arena + the rack / pillar
+    # every loop ends where it began: the same pose shows up twice, one loop apart
+    firsts = [i for i, g in enumerate(goals) if goals.index(g) != i]
+    assert len(firsts) == info['loops']
+    # it drives smoothly: consecutive waypoints are close, the heading follows the loop
+    steps = [math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(goals, goals[1:])]
+    assert sorted(steps)[len(steps) // 2] < 1.0
+    # the outer loop stays ring_clearance from the walls
+    xs, ys = [g[0] for g in goals], [g[1] for g in goals]
+    assert min(xs) > 0.4 and max(xs) < RW.W - 0.4 and min(ys) > 0.4 and max(ys) < RW.H - 0.4
+
+
+def test_face_walls_turns_to_the_wall_on_the_outer_loop():
+    from main_ros.restock.loop_tour import LoopConfig, plan_loops
+    grid = RW.make_world()
+    goals, _ = plan_loops(grid, (0.6, 0.6, 0.0), LoopConfig(inner_loops=False))
+    # on the bottom stretch (y ~ 0.5, driving +x counter-clockwise) it faces -y: the wall
+    low = [g for g in goals if g[1] < 0.6 and 1.0 < g[0] < 3.5]
+    assert low and all(math.sin(g[2]) < -0.9 for g in low)
+
+
 def test_two_passes_and_unreachable_goals_are_skipped_after_one_retry():
     p = Ports()
-    tour = MapTour(p, TourSettings(dwell_s=0.2, passes=2, loop_every_m=0.0))
+    tour = MapTour(p, TourSettings(dwell_s=0.2, passes=2))
     tour.start(RW.make_world())
     one = len(tour.goals) // 2
     assert tour.goals[:one] == tour.goals[one:]
@@ -135,42 +159,16 @@ def test_empty_map_finishes_at_once():
     from main_ros.restock.grid import OccupancyMap
     p = Ports()
     tour = MapTour(p)
-    tour.start(OccupancyMap(np.zeros((40, 40), dtype=np.int16), (0.0, 0.0), 0.05))
-    assert tour.done and 'no edge' in tour.outcome
-    assert math.isfinite(len(tour.goals))
+    tour.start(OccupancyMap(np.full((40, 40), -1, dtype=np.int16), (0.0, 0.0), 0.05))
+    assert tour.done and 'no room' in tour.outcome
 
 
 def test_plan_gives_the_goals_without_driving_and_start_shows_them():
     p = Ports()
     tour = MapTour(p, TourSettings(passes=2))
-    goals, r = tour.plan(RW.make_world(), (0.6, 0.6, 0.0))
+    goals, info = tour.plan(RW.make_world(), (0.6, 0.6, 0.0))
     assert goals and not p.goals                           # planned, nothing sent
-    assert len(goals) == 2 * (len(r.viewpoints) + tour.loops + 1)   # + detours, start
+    assert len(goals) % 2 == 0 and goals[:len(goals) // 2] == goals[len(goals) // 2:]
+    assert goals[len(goals) // 2 - 1] == (0.6, 0.6, 0.0)   # each pass ends at the start
     tour.start(RW.make_world())
     assert p.shown and p.shown[-1][1] == 'map_tour' and p.shown[-1][0] == tour.goals
-
-
-def test_the_tour_goes_back_to_earlier_places_for_loop_closures():
-    p = Ports()
-    tour = MapTour(p, TourSettings(dwell_s=0.2, loop_every_m=3.0, loop_min_m=2.0,
-                                   loop_radius_m=1.5))
-    tour.start(RW.make_world())
-    assert tour.loops >= 1
-    # a detour goal repeats an earlier viewpoint (or the start) of the same pass
-    seen, repeats = {(0.6, 0.6)}, 0
-    for g in tour.goals[:-1]:
-        key = (round(g[0], 3), round(g[1], 3))
-        repeats += key in seen
-        seen.add(key)
-    assert repeats == tour.loops
-    run(tour, p)
-    assert tour.done and tour.skipped == 0
-
-
-def test_no_detours_when_switched_off():
-    p = Ports()
-    tour = MapTour(p, TourSettings(loop_every_m=0.0))
-    tour.start(RW.make_world())
-    assert tour.loops == 0
-    assert len(set((round(g[0], 3), round(g[1], 3)) for g in tour.goals[:-1])) \
-        == len(tour.goals) - 1
