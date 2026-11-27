@@ -24,7 +24,7 @@ exit_with_monitor: true           # monitor window closed (after X, or Q) -> clo
 
 monitor:
   title: Team Zero Mission Monitor
-  geometry: 84x41                 # columns x rows (the monitor needs 82 x 38, 39 on the robot)
+  geometry: 84x50                 # columns x rows: 50 rows list every script (shorter: '+ N more')
 
 foxglove:
   open_studio: true               # open Foxglove Studio (desktop) connected to the robot

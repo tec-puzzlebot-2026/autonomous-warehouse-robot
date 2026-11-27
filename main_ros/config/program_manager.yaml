@@ -273,7 +273,7 @@ steps:
   - name: aruco_detector
     stage: quality
     critical: false
-    cmd: "ros2 run main_ros aruco_detector --ros-args --params-file {config_dir}/aruco_localization.yaml -p image_topic:={image_topic} -p use_sim_time:={use_sim_time}"
+    cmd: "ros2 run main_ros aruco_detector --ros-args -r __node:=aruco_detector --params-file {config_dir}/aruco_localization.yaml -p image_topic:={image_topic} -p use_sim_time:={use_sim_time}"
     ready:
       - node: /aruco_detector
     timeout_s: 30

@@ -13,7 +13,9 @@ distance where it sees the floor and both rack levels.
   3. Selection: greedy set cover, i.e. repeatedly take the viewpoint that sees the
      most edge points not seen yet, until `target_coverage` or no gain.
   4. Order: the shortest tour from the robot's position, nearest neighbour then
-     2-opt, with driving distances on the map (not straight lines).
+     2-opt, with driving distances on the map (not straight lines). With
+     closed=True the tour is shortest INCLUDING the way back to the start, so it
+     goes round the arena as one loop instead of ending far away (the map tour).
 
 The result reports the coverage, so the monitor can show how much of the map the
 camera will have looked at.
@@ -102,8 +104,8 @@ def _visible(grid, blocked, view_xy, heading, edges, edge_xy, cfg):
             if abs(wrap(b - heading)) <= half]
 
 
-def _tour_order(dist, start_d):
-    """Nearest neighbour from the start, then 2-opt on the open tour."""
+def _tour_order(dist, start_d, closed=False):
+    """Nearest neighbour from the start, then 2-opt on the open (or closed) tour."""
     n = len(start_d)
     if n == 0:
         return []
@@ -117,7 +119,8 @@ def _tour_order(dist, start_d):
         left.remove(cur)
 
     def length(o):
-        return start_d[o[0]] + sum(dist[o[i]][o[i + 1]] for i in range(len(o) - 1))
+        back = start_d[o[-1]] if closed else 0.0
+        return start_d[o[0]] + sum(dist[o[i]][o[i + 1]] for i in range(len(o) - 1)) + back
 
     improved = True
     best = length(order)
@@ -132,8 +135,12 @@ def _tour_order(dist, start_d):
     return order
 
 
-def plan_route(grid, start, cfg=None):
-    """Inspection route from the robot's position `start` (x, y[, theta])."""
+def plan_route(grid, start, cfg=None, closed=False):
+    """Inspection route from the robot's position `start` (x, y[, theta]).
+
+    closed: order it as a loop that ends back at the start (the length includes the
+    way back), instead of the shortest path through all viewpoints.
+    """
     cfg = cfg or RouteConfig()
     edges, obs = edge_points(grid, cfg)
     if not edges:
@@ -192,8 +199,10 @@ def plan_route(grid, start, cfg=None):
     start_cell = grid.world_to_cell(*start[:2])
     start_d = [float(f[start_cell]) if grid.inside(*start_cell) and np.isfinite(f[start_cell])
                else math.hypot(p[0] - start[0], p[1] - start[1]) for f, p in zip(fields, pts)]
-    order = _tour_order(dist, start_d)
+    order = _tour_order(dist, start_d, closed)
     route.viewpoints = [pts[i] for i in order]
     route.length = start_d[order[0]] + sum(dist[order[i]][order[i + 1]]
                                            for i in range(len(order) - 1))
+    if closed:
+        route.length += start_d[order[-1]]
     return route

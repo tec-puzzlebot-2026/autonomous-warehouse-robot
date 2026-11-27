@@ -101,7 +101,7 @@ def test_tour_visits_every_viewpoint_and_returns_to_the_start():
 
 def test_two_passes_and_unreachable_goals_are_skipped_after_one_retry():
     p = Ports()
-    tour = MapTour(p, TourSettings(dwell_s=0.2, passes=2))
+    tour = MapTour(p, TourSettings(dwell_s=0.2, passes=2, loop_every_m=0.0))
     tour.start(RW.make_world())
     one = len(tour.goals) // 2
     assert tour.goals[:one] == tour.goals[one:]
@@ -145,7 +145,32 @@ def test_plan_gives_the_goals_without_driving_and_start_shows_them():
     tour = MapTour(p, TourSettings(passes=2))
     goals, r = tour.plan(RW.make_world(), (0.6, 0.6, 0.0))
     assert goals and not p.goals                           # planned, nothing sent
-    assert len(goals) == 2 * (len(r.viewpoints) + 1)       # + the start, every pass
+    assert len(goals) == 2 * (len(r.viewpoints) + tour.loops + 1)   # + detours, start
     tour.start(RW.make_world())
     assert p.shown and p.shown[-1][1] == 'map_tour' and p.shown[-1][0] == tour.goals
 
+
+def test_the_tour_goes_back_to_earlier_places_for_loop_closures():
+    p = Ports()
+    tour = MapTour(p, TourSettings(dwell_s=0.2, loop_every_m=3.0, loop_min_m=2.0,
+                                   loop_radius_m=1.5))
+    tour.start(RW.make_world())
+    assert tour.loops >= 1
+    # a detour goal repeats an earlier viewpoint (or the start) of the same pass
+    seen, repeats = {(0.6, 0.6)}, 0
+    for g in tour.goals[:-1]:
+        key = (round(g[0], 3), round(g[1], 3))
+        repeats += key in seen
+        seen.add(key)
+    assert repeats == tour.loops
+    run(tour, p)
+    assert tour.done and tour.skipped == 0
+
+
+def test_no_detours_when_switched_off():
+    p = Ports()
+    tour = MapTour(p, TourSettings(loop_every_m=0.0))
+    tour.start(RW.make_world())
+    assert tour.loops == 0
+    assert len(set((round(g[0], 3), round(g[1], 3)) for g in tour.goals[:-1])) \
+        == len(tour.goals) - 1

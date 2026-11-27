@@ -4,9 +4,17 @@ map_tour.py — stage 2: drive around the saved map to improve it (no ROS)
 After the exploration (stage 1) the robot knows the arena roughly. This tour drives
 it along every obstacle edge (the same viewpoint planner as the restocking patrol,
 restock/route.py) while Planisferio keeps mapping and the landmark mapper places
-every ArUco marker and company logo it sees on the map. The tour comes back to its
-start at the end of every pass, so Planisferio closes the big loop; with passes: 2
-it goes round twice (more loop closures, more sightings per marker).
+every ArUco marker and company logo it sees on the map.
+
+The tour is built to give Planisferio LOOP CLOSURES, which is what straightens the
+map: coming back to a place it mapped long ago lets the pose graph correct the drift
+accumulated in between.
+  - The viewpoints are ordered as one closed loop round the arena (route.py,
+    closed=True) that ends back at the start: the big loop.
+  - Every loop_every_m of driving, the tour detours back to an EARLIER viewpoint
+    that is close by (loop_radius_m of driving) but was left at least loop_min_m of
+    driving ago: a small loop. Then it carries on where it was.
+  - passes: 2 goes round everything twice (more closures, more sightings per marker).
 
 At each viewpoint the robot stops for dwell_s: the landmark mapper only uses
 sightings taken while the robot stands still (sharp images, a settled pose).
@@ -33,6 +41,9 @@ class TourSettings:
     dwell_s: float = 1.5              # stand still at every viewpoint (camera sightings)
     passes: int = 1                   # times round the whole tour
     return_to_start: bool = True      # end every pass where it started: a loop closure
+    loop_every_m: float = 3.0         # m driven between detours back to an old place (0 = none)
+    loop_min_m: float = 3.0           # m driven since that place: shorter is not a real loop
+    loop_radius_m: float = 2.0        # m (driving) to that place: farther is not worth it
     nav_timeout_s: float = 120.0
     route: dict = field(default_factory=lambda: {'view_range': 2.0})   # the camera sees far
 
@@ -64,6 +75,7 @@ class MapTour:
         self.outcome = ''
         self.detail = ''
         self.route_info = {}
+        self.loops = 0
         self.events = collections.deque(maxlen=30)
 
     # ── control ──────────────────────────────────────────────────────────
@@ -71,14 +83,67 @@ class MapTour:
         """The tour's goals in visiting order (all passes), without driving: start()
         uses it, and the Program Manager shows it as a preview after mapping."""
         start = tuple(start or self.p.slam_pose() or (0.0, 0.0, 0.0))
-        r = plan_route(grid, start, self.route_cfg)
+        r = plan_route(grid, start, self.route_cfg, closed=self.s.return_to_start)
         self.route_info = r.to_dict()
         one = list(r.viewpoints)
         if not one:
             return [], r
+        one, self.loops = self._add_loops(grid, start, one)
+        self.route_info['loops'] = self.loops
         if self.s.return_to_start:
             one.append(start)
         return one * max(1, int(self.s.passes)), r
+
+    def _add_loops(self, grid, start, goals):
+        """Insert detours back to earlier viewpoints (small loop closures)."""
+        if self.s.loop_every_m <= 0 or len(goals) < 3:
+            return list(goals), 0
+        rc = self.route_cfg
+        trav = grid.traversable(rc.robot_radius, rc.clearance_margin)
+
+        def step(a, b):
+            return math.hypot(b[0] - a[0], b[1] - a[1])
+
+        out, driven = [], []              # goals so far, and the distance driven to each
+        visited = [(tuple(start), 0.0)]   # places a detour can go back to
+        used = set()
+        total = since = 0.0
+        prev = start
+        loops = 0
+        for g in goals:
+            d = step(prev, g)
+            total += d
+            since += d
+            out.append(g)
+            driven.append(total)
+            visited.append((tuple(g), total))
+            prev = g
+            if since < self.s.loop_every_m:
+                continue
+            old = [(i, p, t) for i, (p, t) in enumerate(visited)
+                   if i not in used and total - t >= self.s.loop_min_m]
+            if not old:
+                continue
+            field_ = grid.path_lengths(g[:2], trav)
+            best = None
+            for i, p, t in old:              # the oldest place within reach: the biggest loop
+                cell = grid.world_to_cell(p[0], p[1])
+                if not grid.inside(*cell):
+                    continue
+                dd = float(field_[cell])
+                if math.isfinite(dd) and dd <= self.s.loop_radius_m and (best is None
+                                                                         or t < best[2]):
+                    best = (i, p, t, dd)
+            if best is None:
+                continue
+            i, p, _t, dd = best
+            used.add(i)
+            out.append(p)                    # go back there (same pose: the same view)
+            total += dd
+            since = 0.0
+            prev = p                         # and carry on from there
+            loops += 1
+        return out, loops
 
     def start(self, grid):
         goals, r = self.plan(grid)
@@ -91,7 +156,8 @@ class MapTour:
         if show:
             show(self.goals, 'map_tour')
         self._event(f'map tour: {len(r.viewpoints)} viewpoints x {max(1, int(self.s.passes))} '
-                    f'pass(es), {r.length:.1f} m per pass, {100 * r.coverage:.0f} % of the edges')
+                    f'pass(es), {r.length:.1f} m per pass, {100 * r.coverage:.0f} % of the edges, '
+                    f'{self.loops} loop closure detour(s) per pass')
         self._go()
 
     def pause(self):

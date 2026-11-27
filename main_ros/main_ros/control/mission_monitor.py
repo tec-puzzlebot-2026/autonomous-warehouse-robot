@@ -56,7 +56,7 @@ KEYS = [  # (key, command, label)
 NEEDS_CONFIRM = ('N', 'X')
 KEYS_SHORT = {'S': 'start', 'F': 'finish', 'M': 'save', 'K': 'skip'}
 STAGE_MARK = {'done': '✓', 'skipped': '–', 'active': '▶', 'todo': '·'}
-MAX_NODE_ROWS = 9               # the window stays 84 x 41 in every stage
+MAX_NODE_ROWS = 9               # at least; a taller window lists more (all at 84 x 50)
 AREA_WINDOW_S = 60.0            # map growth is measured over this window
 
 
@@ -323,10 +323,12 @@ def draw(scr, node):
             else:
                 word, attr = 'off', dim
             nodes.append((f'Node {i}', s.get('name', '')[:17], word, attr))
-        if len(nodes) > MAX_NODE_ROWS:       # stage 4 runs many scripts: problems first
+        h, w = scr.getmaxyx()
+        max_rows = max(MAX_NODE_ROWS, len(conn), h - 31)   # as many as the window fits
+        if len(nodes) > max_rows:            # too short a window: problems first
             bad = [n for n in nodes if n[3] is not green]
             good = [n for n in nodes if n[3] is green]
-            keep = (bad + good)[:MAX_NODE_ROWS - 1]
+            keep = (bad + good)[:max_rows - 1]
             rest = len(nodes) - len(keep)
             nodes = keep + [('', f'+ {rest} more', 'running', green)]
         n_split = max(len(conn), len(nodes))

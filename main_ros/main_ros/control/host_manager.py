@@ -171,7 +171,7 @@ class HostManager:
         """Command that opens the monitor in a new terminal window, or None."""
         mon = self.cfg.get('monitor', {})
         title = mon.get('title', 'Team Zero Mission Monitor')
-        geometry = mon.get('geometry', '84x41')
+        geometry = mon.get('geometry', '84x50')
         # Exit code 0 (X finished, or Q): the window closes by itself.
         # Anything else (ssh failed, container not running...): it stays open
         # so the error can be read.
