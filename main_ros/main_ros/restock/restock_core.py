@@ -126,6 +126,10 @@ class RestockSettings:
     deliver_to: str = 'docks'
     # Box selection.
     max_far_range: float = 3.0         # m, farther sightings are ignored (seen again later)
+    min_far_conf: float = 0.85         # far detector confidence that starts a box task
+    # With boxes_always_on: a box seen while driving to a viewpoint stops the patrol
+    # there (the route resumes at that viewpoint after the box).
+    watch_while_driving: bool = True
     dup_radius: float = 0.20           # m, a sighting this close to a known box is that box
     refine_jump: float = 0.25          # m, near estimate this far from the far one: re-approach
     max_boxes_per_view: int = 6
@@ -362,6 +366,8 @@ class RestockCore:
         now = self.p.now()
         if self.wait is not None:
             self._poll_wait(now)
+            if self.phase == 'PATROL_GO' and self.wait is not None:
+                self._watch_far_box(now)
         else:
             handler = getattr(self, '_tick_' + self.phase, None)
             if handler is not None:
@@ -787,6 +793,7 @@ class RestockCore:
     def _enter_PATROL_GO(self):
         self._vision()
         self.boxes_here = 0
+        self.ph['look_from'] = self.p.now() + self.s.look_settle_s   # sightings while driving
         if self.idx >= len(self.route):
             self._finish('COMPLETE: route finished')
             return
@@ -801,6 +808,29 @@ class RestockCore:
             self._goto('PATROL_GO')
         self._nav(self.route[self.idx], self._viewpoint_profile(),
                   lambda: self._goto('PATROL_LOOK'), skip, f'viewpoint {self.idx + 1}')
+
+    def _watch_far_box(self, now):
+        """Driving to a viewpoint with the far detector on: a box seen with enough
+        confidence stops the patrol here and starts its box task."""
+        if not (self.s.boxes_always_on and self.s.watch_while_driving):
+            return
+        if now < self.ph.get('watch_next', 0.0):
+            return
+        self.ph['watch_next'] = now + 0.5
+        box = self._pick_far_box()
+        if box is None:
+            return
+        w, self.wait = self.wait, None
+        try:
+            w['h'].cancel()
+        except Exception:                      # noqa: BLE001
+            pass
+        self.p.cancel_motion()
+        self.boxes.append(box)
+        self.box = box
+        self._event(f'{box.id} spotted while driving at ({box.x:.2f}, {box.y:.2f}), level '
+                    f'{box.level}: patrol paused at viewpoint {self.idx + 1}')
+        self._goto('APPROACH')
 
     def _enter_PATROL_LOOK(self):
         self.detail = f'Patrol: looking for boxes at viewpoint {self.idx + 1}/{len(self.route)}'
@@ -828,8 +858,10 @@ class RestockCore:
             return None
         best = None
         for _, d in self._messages('box_far'):
-            boxes = [b[:4] for b in d.get('all') or []]
-            if not boxes and d.get('found') and d.get('box'):
+            boxes = [b[:4] for b in d.get('all') or []
+                     if len(b) < 5 or float(b[4]) >= self.s.min_far_conf]
+            if not boxes and d.get('found') and d.get('box') \
+                    and float(d.get('conf', 1.0)) >= self.s.min_far_conf:
                 boxes = [d['box']]
             for image_box in boxes:
                 sg = G.locate_box(cam, pose, image_box, self.spec)

@@ -548,3 +548,29 @@ def test_survey_finds_a_missing_dock(tmp_path):
     assert b.state == 'dock' and core.world.docks['walnut'].contains(b.x, b.y)
     saved = MS.read_yaml(os.path.join(ports.folder, MS.DOCKS))
     assert 'walnut' in [d['company'] for d in saved['docks']]
+
+
+def test_weak_far_detections_do_not_start_a_box_task(tmp_path):
+    """Below min_far_conf (e.g. something yellow that is not a box) nothing is approached."""
+    boxes = [box_against_left_wall('walnut')]
+    core, ports = make_core(tmp_path, boxes)
+    plain = ports.messages
+
+    def weak(stream, since):
+        out = plain(stream, since)
+        if stream == 'box_far':
+            for _, d in out:
+                d['all'] = [b[:4] + [0.5] for b in d['all']]
+                d['conf'] = 0.5
+        return out
+    ports.messages = weak
+    run(core, ports)
+    assert core.done and not core.boxes
+
+
+def test_a_box_seen_while_driving_stops_the_patrol(tmp_path):
+    boxes = [box_against_left_wall('walnut')]
+    core, ports = make_core(tmp_path, boxes)
+    run(core, ports)
+    assert core.done and core.outcome.startswith('COMPLETE'), core.outcome
+    assert any('spotted while driving' in line or 'spotted at' in line for line in ports.logs)
