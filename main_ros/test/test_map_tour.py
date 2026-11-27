@@ -85,7 +85,7 @@ def run(tour, p, seconds=2000.0, dt=0.1):
 
 def test_tour_drives_every_waypoint_and_returns_to_the_start():
     p = Ports()
-    tour = MapTour(p, TourSettings(dwell_s=1.0))
+    tour = MapTour(p, TourSettings(dwell_s=1.0, pass_radius=0.0))
     tour.start(RW.make_world())
     n = len(tour.goals)
     assert n > 10
@@ -105,7 +105,7 @@ def test_the_tour_is_closed_loops_round_the_arena_and_the_obstacles():
     assert info['loops'] >= 2 and info['inner_loops'] >= 1   # the arena + the rack / pillar
     # every loop ends where it began: the same pose shows up twice, one loop apart
     firsts = [i for i, g in enumerate(goals) if goals.index(g) != i]
-    assert len(firsts) == info['loops']
+    assert len(firsts) >= info['loops']
     # it drives smoothly: consecutive waypoints are close, the heading follows the loop
     steps = [math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(goals, goals[1:])]
     assert sorted(steps)[len(steps) // 2] < 1.0
@@ -117,7 +117,8 @@ def test_the_tour_is_closed_loops_round_the_arena_and_the_obstacles():
 def test_face_walls_turns_to_the_wall_on_the_outer_loop():
     from main_ros.restock.loop_tour import LoopConfig, plan_loops
     grid = RW.make_world()
-    goals, _ = plan_loops(grid, (0.6, 0.6, 0.0), LoopConfig(inner_loops=False))
+    goals, _ = plan_loops(grid, (0.6, 0.6, 0.0), LoopConfig(inner_loops=False, loop_size=0,
+                                                            face_walls=True))
     # on the bottom stretch (y ~ 0.5, driving +x counter-clockwise) it faces -y: the wall
     low = [g for g in goals if g[1] < 0.6 and 1.0 < g[0] < 3.5]
     assert low and all(math.sin(g[2]) < -0.9 for g in low)
@@ -172,3 +173,64 @@ def test_plan_gives_the_goals_without_driving_and_start_shows_them():
     assert goals[len(goals) // 2 - 1] == (0.6, 0.6, 0.0)   # each pass ends at the start
     tour.start(RW.make_world())
     assert p.shown and p.shown[-1][1] == 'map_tour' and p.shown[-1][0] == tour.goals
+
+
+def test_several_smaller_loops_then_one_round_everything():
+    from main_ros.restock.loop_tour import LoopConfig, plan_loops
+    grid = RW.make_world()
+    goals, info = plan_loops(grid, (0.6, 0.6, 0.0), LoopConfig(loop_size=1.6))
+    assert info['sector_loops'] >= 3 and info['loops'] >= info['sector_loops'] + 1
+    one, info1 = plan_loops(grid, (0.6, 0.6, 0.0), LoopConfig(loop_size=0))
+    assert info1['sector_loops'] == 0 and info1['loops'] >= 1
+
+
+class MovingPorts(Ports):
+    """The robot moves toward the goal a bit every tick; Sendero never finishes the
+    last stretch of goal `stuck` (it cannot turn there, say)."""
+
+    def __init__(self, stuck=None):
+        super().__init__()
+        self.stuck = stuck
+        self.target = None
+
+    def navigate(self, pose, profile):
+        self.goals.append((tuple(pose), self.t))
+        self.target = tuple(pose)
+        p = self
+
+        class H:
+            canceled = False
+
+            def done(self):
+                g = p.target
+                at = math.hypot(p.pose[0] - g[0], p.pose[1] - g[1]) < 0.05
+                return self.canceled or (at and g != p.stuck)
+
+            def result(self):
+                return (not self.canceled, '')
+
+            def cancel(self):
+                self.canceled = True
+        return H()
+
+    def step(self, dt):
+        if self.target is None:
+            return
+        dx, dy = self.target[0] - self.pose[0], self.target[1] - self.pose[1]
+        d = math.hypot(dx, dy)
+        k = min(1.0, 0.3 * dt / max(d, 1e-9))
+        self.pose[0] += k * dx
+        self.pose[1] += k * dy
+
+
+def test_drives_through_waypoints_and_never_hangs_at_one():
+    p = MovingPorts()
+    tour = MapTour(p, TourSettings(pass_radius=0.35, stall_s=3.0))
+    tour.start(RW.make_world())
+    p.stuck = tour.goals[-1]                         # Sendero never finishes the last one
+    while p.t < 3000 and not tour.done:
+        tour.tick()
+        p.step(0.1)
+        p.t = round(p.t + 0.1, 3)
+    assert tour.done and tour.skipped == 0
+    assert any('without Sendero finishing' in line for line in p.logs)

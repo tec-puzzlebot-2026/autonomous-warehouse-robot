@@ -23,6 +23,7 @@ Ports (restock_ports.RestockPorts on the robot, a fake in the tests):
 # Author: Raymundo Gomez
 
 import collections
+import math
 import time
 from dataclasses import dataclass
 
@@ -33,13 +34,18 @@ from main_ros.restock.loop_tour import LoopConfig, plan_loops
 class TourSettings:
     """config/restock.yaml, section map_quality."""
     profile: str = 'transport'
-    dwell_s: float = 1.5              # stand still at every waypoint (camera sightings)
+    dwell_s: float = 0.0              # stand still at a waypoint it stops at (0 = drive on)
     passes: int = 1                   # times round all the loops
     return_to_start: bool = True      # end every pass where it started
     ring_clearance: float = 0.5       # m from walls and obstacles to the loops
     spacing: float = 0.8              # m between waypoints along a loop
-    face_walls: bool = True           # outer loop: face the wall at every stop (camera)
+    loop_size: float = 1.6            # m, longest sector loop (0 = one loop round all)
+    outer_loop: bool = True           # after the sectors, one loop round the whole arena
+    face_walls: bool = False          # outer loop: face the nearest wall at every stop
     inner_loops: bool = True          # also loop round the obstacles in the arena
+    robot_radius: float = 0.15        # m, the loops only run where the robot fits
+    pass_radius: float = 0.35         # m, this close to a waypoint: on to the next (0 = stop)
+    stall_s: float = 6.0              # s at a goal Sendero does not finish: count it reached
     nav_timeout_s: float = 60.0
 
     @classmethod
@@ -55,8 +61,11 @@ class MapTour:
         self.p = ports
         self.s = settings or TourSettings()
         self.loop_cfg = LoopConfig(ring_clearance=self.s.ring_clearance,
-                                   spacing=self.s.spacing, face_walls=self.s.face_walls,
-                                   inner_loops=self.s.inner_loops)
+                                   spacing=self.s.spacing, loop_size=self.s.loop_size,
+                                   outer_loop=self.s.outer_loop, face_walls=self.s.face_walls,
+                                   inner_loops=self.s.inner_loops,
+                                   robot_radius=self.s.robot_radius)
+        self.near_since = None            # first time near the current goal
         self.goals = []                   # [(x, y, theta)] in visiting order, all passes
         self.idx = 0
         self.skipped = 0
@@ -143,23 +152,63 @@ class MapTour:
             self.wait = None
             ok, msg = w.result()
             if ok:
-                self.retried = False
-                self.dwell_until = now + self.s.dwell_s
-                self.detail = (f'Map tour: looking around at goal {self.idx + 1}/'
-                               f'{len(self.goals)}{self._markers_text()}')
+                self._reached(now)
                 return
             self._failed(msg)
+        elif self._passed(now):
+            self.wait = None                  # the next goal replaces it in Sendero
+            self.retried = False
+            self.idx += 1
+            self._go()
         elif now > self.wait_until:
             w.cancel()
             self.wait = None
             self._failed('timed out')
 
     # ── helpers ──────────────────────────────────────────────────────────
+    def _reached(self, now):
+        self.retried = False
+        if self.s.dwell_s > 0:
+            self.dwell_until = now + self.s.dwell_s
+            self.detail = (f'Map tour: looking around at goal {self.idx + 1}/'
+                           f'{len(self.goals)}{self._markers_text()}')
+        else:
+            self.idx += 1
+            self._go()
+
+    def _passed(self, now):
+        """Close enough to the current goal to go on: drive through the waypoints of a
+        loop without stopping (pass_radius), and never wait for ever at one Sendero
+        does not finish (e.g. it cannot turn there): stall_s near it counts as reached."""
+        pose = self.p.slam_pose()
+        if pose is None or self.idx >= len(self.goals):
+            return False
+        g = self.goals[self.idx]
+        d = math.hypot(pose[0] - g[0], pose[1] - g[1])
+        last = self.idx == len(self.goals) - 1
+        if self.s.pass_radius > 0 and not last and d <= self.s.pass_radius:
+            return True
+        near = d <= max(self.s.pass_radius, 0.25)
+        if not near:
+            self.near_since = None
+            return False
+        if self.near_since is None:
+            self.near_since = now
+            return False
+        if now - self.near_since >= self.s.stall_s:
+            self._event(f'goal {self.idx + 1}: at it for {self.s.stall_s:.0f} s without '
+                        'Sendero finishing; going on')
+            if self.wait is not None:
+                self.wait.cancel()
+            return True
+        return False
+
     def _go(self):
         if self.idx >= len(self.goals):
             self._finish(f'tour complete ({self.skipped} goals skipped)')
             return
         pose = self.goals[self.idx]
+        self.near_since = None
         self.wait = self.p.navigate(pose, self.s.profile)
         self.wait_until = self.p.now() + self.s.nav_timeout_s
         self.detail = (f'Map tour: driving to goal {self.idx + 1}/{len(self.goals)}'

@@ -56,6 +56,7 @@ KEYS = [  # (key, command, label)
 NEEDS_CONFIRM = ('N', 'X')
 KEYS_SHORT = {'S': 'start', 'F': 'finish', 'M': 'save', 'K': 'skip'}
 STAGE_MARK = {'done': '✓', 'skipped': '–', 'active': '▶', 'todo': '·'}
+STALE_AFTER_S = 15.0            # s without a report before SLAM/Frontera/Sendero is 'stale'
 MAX_NODE_ROWS = 9               # at least; a taller window lists more (all at 84 x 50)
 AREA_WINDOW_S = 60.0            # map growth is measured over this window
 
@@ -139,14 +140,16 @@ def fnum(value, fmt='{:.2f}', default='–'):
         return default
 
 
-def age_word(age, fresh=3.0):
-    """'connected' / 'stale 12 s' / 'no data' for a report age."""
+def age_word(age, fresh=STALE_AFTER_S):
+    """'running' / 'stale 25 s' / 'no data' for a report age. The reports come at about
+    1 Hz of ROS time; with Isaac running slower than real time (and the link to the
+    Spark), a few seconds between two of them is normal: only a long gap is stale."""
     try:
         a = float(age)
     except (TypeError, ValueError):
         return 'no data', 'dim'
     if a < fresh:
-        return 'connected', 'green'
+        return 'running', 'green'
     return f'stale {a:.0f} s', 'amber'
 
 
@@ -304,6 +307,9 @@ def draw(scr, node):
             conn.append(('Isaac Sim', 'playing', green) if st.get('sim_time_ok')
                         else ('Isaac Sim', 'not playing', amber))
         for label, sub in (('SLAM', slam), ('Frontera', ex), ('Sendero', nav)):
+            if label == 'Frontera' and st.get('mapping_done'):
+                conn.append((label, 'done', green))      # stage 1 over: Frontera closed
+                continue
             word, col = age_word(sub.get('age_s'))
             conn.append((label, word, C[col]))
         fox = next((s for s in steps if s.get('name') == 'foxglove_bridge'), None)

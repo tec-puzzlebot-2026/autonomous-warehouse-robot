@@ -913,6 +913,7 @@ class MissionCore:
             'mode': self.mode,
             'stages': self.stage_progress(),
             'loaded_map': self.loaded_map,
+            'mapping_done': 'mapping' in self.done_stages or self.loaded_map,
             'mission_folder': self.mission_folder,
             'route': self.route_info,
             'tour': self.tour.snapshot() if self.tour is not None else None,

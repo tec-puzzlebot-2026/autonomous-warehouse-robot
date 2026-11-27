@@ -12,20 +12,28 @@
 # =============================================================================
 
 map_quality:                 # stage 2 (optional): improve the map, find markers and logos
-  # Closed LOOPS (restock/loop_tour.py): round the whole arena along the walls, then
-  # round every obstacle / row of racks, each back to where it began, then back to the
-  # start. Coming back to places mapped long before lets Planisferio close loops.
-  profile: patrol            # Sendero profile of the tour (quick stops, sendero_puzzlebot.yaml)
-  dwell_s: 0.8               # stand still at every waypoint (the landmark mapper only
-                             # uses sightings taken while the robot is still)
-  passes: 1                  # times round all the loops (2 = more loop closures, slower)
-  return_to_start: true
+  # Closed LOOPS (restock/loop_tour.py): the arena is cut across its long side into
+  # sectors; one loop round each sector (neighbouring loops drive along the same cut
+  # line, so each new loop closes on ground the last one mapped), a loop round every
+  # obstacle inside a sector, then one big loop round the whole arena, then back to
+  # the start. Coming back to places mapped before lets Planisferio close loops.
+  profile: patrol            # Sendero profile of the tour (sendero_puzzlebot.yaml)
+  loop_size: 1.6             # m, longest sector loop (more, smaller loops: lower it;
+                             # 0 = no sectors, only the big loop)
+  outer_loop: true           # after the sectors, one loop round the whole arena
+  inner_loops: true          # also loop round the obstacles inside the arena
   ring_clearance: 0.5        # m from walls and obstacles to the loops (lowered by itself
                              # if a narrow passage would cut the arena in two)
   spacing: 0.8               # m between waypoints along a loop
-  face_walls: true           # outer loop: turn to the nearest wall at every stop (camera
-                             # sees the ArUco markers and logos); false = drive straight on
-  inner_loops: true          # also loop round the obstacles inside the arena
+  robot_radius: 0.15         # m, the loops only run where the robot fits (forks included)
+  pass_radius: 0.35          # m, this close to a waypoint: straight on to the next one
+                             # without stopping (0 = stop at every waypoint)
+  dwell_s: 0.0               # s standing still at a waypoint it stops at
+  stall_s: 6.0               # s at a goal Sendero does not finish: count it as reached
+  face_walls: false          # true: the big loop's waypoints face the nearest wall (the
+                             # robot stops and turns at each: slower)
+  passes: 1                  # times round all the loops (2 = more loop closures, slower)
+  return_to_start: true
   nav_timeout_s: 60.0        # per waypoint; a failed one is retried once, then skipped
 
 route_drive:                 # stage 4 with restock_mode: route_only (program_manager.yaml)
