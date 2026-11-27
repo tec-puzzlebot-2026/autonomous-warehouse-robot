@@ -156,6 +156,8 @@ class ArucoDetectorNode(Node):
                 'reproj_err_px': _finite(d['reproj_err_px']),
                 'ambiguity': _finite(d['ambiguity']),
                 'area_px': _finite(d['area_px']),
+                'corners': [[round(float(u), 1), round(float(v), 1)]
+                            for u, v in np.asarray(d['corners']).reshape(-1, 2)],
             })
             if self.publish_tf:
                 self.send_tf(msg.header, d['id'], d['t'], q)

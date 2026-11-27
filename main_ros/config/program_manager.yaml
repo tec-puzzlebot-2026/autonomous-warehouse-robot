@@ -139,7 +139,7 @@ stale_process_patterns:
   - 'sendero\.launch\.py'
   - 'lib/frontera/exploration_manager( |$)'
   - '__node:=foxglove_bridge_mission'
-  - 'lib/main_ros/(scan_filter|landmark_mapper|logo_detector|box_target|qr_reader|aruco_detector|forklift_placeholder|encoder_bridge|ekf_localization)( |$)'
+  - 'lib/main_ros/(scan_filter|vision_overlay|landmark_mapper|logo_detector|box_target|qr_reader|aruco_detector|forklift_placeholder|encoder_bridge|ekf_localization)( |$)'
   - 'ekf_localization\.launch\.py'
   - 'robot_description\.launch\.py'
   - 'vision\.launch\.py'
@@ -287,6 +287,16 @@ steps:
       - node: /logo_detector
     timeout_s: 60
     hint: "Set logo_model under modes in this file (.engine, .onnx or .pt)."
+
+  # Foxglove: the camera image with every detector's result drawn on it (ArUco, logos,
+  # far / near boxes, QR) on /vision/overlay. Draws only while someone watches it.
+  - name: vision_overlay
+    stage: quality
+    critical: false
+    cmd: "ros2 run main_ros vision_overlay --ros-args -p image_topic:={image_topic} -p use_sim_time:={use_sim_time}"
+    ready:
+      - node: /vision_overlay
+    timeout_s: 30
 
   # Puts every ArUco and logo the camera sees on the SLAM map (saved after mapping).
   - name: landmark_mapper

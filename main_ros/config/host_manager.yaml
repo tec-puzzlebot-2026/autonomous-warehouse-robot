@@ -34,7 +34,7 @@ foxglove:
   # for the Jetson: no parameter / service / graph queries (Humble's Python nodes cannot
   # answer the parameter ones: "failed to create array for field 'prefixes'"), and only
   # the topics worth looking at (no camera images over Wi-Fi). Large topics best effort.
-  bridge_cmd: 'ros2 run foxglove_bridge foxglove_bridge --ros-args -p port:=8765 -p address:=127.0.0.1 -p send_buffer_limit:=10000000 -p num_threads:=2 -p "capabilities:=[clientPublish,assets]" -p "topic_whitelist:=[''^/(tf|tf_static|map|robot_description|laser_scan|scan_nav|wheel/odom|slam/.*|navigation/.*|exploration/.*|mission/.*|restock/.*|landmark_mapper/.*|ekf/pose|ekf/status|aruco/detections)$'']" -p "best_effort_qos_topic_whitelist:=[''^/(tf|laser_scan|scan_nav|wheel/odom|slam/scan|slam/particles|slam/pose|navigation/local_costmap|navigation/markers)$'']"'
+  bridge_cmd: 'ros2 run foxglove_bridge foxglove_bridge --ros-args -p port:=8765 -p address:=127.0.0.1 -p send_buffer_limit:=10000000 -p num_threads:=2 -p "capabilities:=[clientPublish,assets]" -p "topic_whitelist:=[''^/(tf|tf_static|map|robot_description|laser_scan|scan_nav|wheel/odom|slam/.*|navigation/.*|exploration/.*|mission/.*|restock/.*|landmark_mapper/.*|ekf/pose|ekf/status|aruco/detections|vision/overlay)$'']" -p "best_effort_qos_topic_whitelist:=[''^/(tf|laser_scan|scan_nav|wheel/odom|slam/scan|slam/particles|slam/pose|navigation/local_costmap|navigation/markers)$'']"'
 
 rviz:                             # visualization:=rviz (needs DDS to the robot)
   cmd: 'rviz2 -d "$(ros2 pkg prefix planisferio)/share/planisferio/rviz/planisferio.rviz" --ros-args -p use_sim_time:=true'

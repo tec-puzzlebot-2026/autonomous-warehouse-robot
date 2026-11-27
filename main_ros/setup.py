@@ -169,6 +169,7 @@ setup(
 
             # ArUco marker detection and pose estimation
             'aruco_detector = main_ros.vision.aruco.aruco_detector_node:main',
+            'vision_overlay = main_ros.vision.overlay_node:main',
 
             # ArUco sample taking
             'take_aruco_sample = main_ros.vision.aruco.take_aruco_sample:main',
