@@ -355,3 +355,4 @@ prompts.json.*
 *.trt
 near_box.yaml
 # Generic large/binary data - never commit
+!main_ros/main_ros/simulation/assets/qr/*.png
