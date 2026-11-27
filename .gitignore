@@ -356,3 +356,5 @@ prompts.json.*
 near_box.yaml
 # Generic large/binary data - never commit
 !main_ros/main_ros/simulation/assets/qr/*.png
+!main_ros/main_ros/simulation/assets/aruco/*.png
+!main_ros/main_ros/simulation/assets/logos/*.png
