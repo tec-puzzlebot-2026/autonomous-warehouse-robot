@@ -47,7 +47,8 @@ from dataclasses import asdict, dataclass, field
 from main_ros.restock import geometry as G
 from main_ros.restock import mission_store as ms
 from main_ros.restock.docks import Dock, find_docks, free_area_near
-from main_ros.restock.zones import Zone, ZoneConfig, drop_zone, zones_from_markers
+from main_ros.restock.zones import (DROP_ZONE, Zone, ZoneConfig, drop_zone,
+                                    zones_from_markers)
 from main_ros.restock.geometry import wrap
 from main_ros.restock.grid import OccupancyMap
 from main_ros.restock.route import RouteConfig, plan_route
@@ -343,6 +344,33 @@ class RestockCore:
                 handler(now)
         if not (self.paused or self.error or self.done):
             self._crosscheck(now)
+            self._watch_drop_zone(now)
+
+    def _watch_drop_zone(self, now):
+        """No drop zone in the mission folder (its ArUco was not seen while mapping): take
+        it from the landmark mapper as soon as the camera sees that marker now."""
+        w = self.world
+        if w is None or w.drop_zone is not None or now < getattr(self, '_dz_next', 0.0):
+            return
+        self._dz_next = now + 2.0
+        lm = self.p.landmarks() or {}
+        ids = [i for i, label in self.zone_cfg.labels.items() if label == DROP_ZONE]
+        seen = [m for m in lm.get('markers', []) if int(m.get('id', -1)) in ids]
+        if not seen:
+            return
+        z = zones_from_markers(w.grid, seen[:1], self.zone_cfg)[0]
+        w.zones = [q for q in w.zones if q.marker_id != z.marker_id] + [z]
+        w.drop_zone = z
+        self._event(f'drop zone found: ArUco {z.marker_id} seen now, zone at '
+                    f'({z.center[0]:.2f}, {z.center[1]:.2f})')
+        show = getattr(self.p, 'show_zones', None)
+        if show:
+            show(w.zones)
+        try:
+            ms.write_yaml(os.path.join(self.folder, ms.ZONES),
+                          {'zones': [q.to_dict() for q in w.zones]})
+        except OSError as exc:
+            self._event(f'cannot write zones.yaml: {exc}')
 
     # =====================================================================
     # phase plumbing

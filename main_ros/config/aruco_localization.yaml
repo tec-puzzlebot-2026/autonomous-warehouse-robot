@@ -26,7 +26,8 @@ aruco_detector:
 # the black square measures ~8.6 cm. Measure it! A 10% error here = 10% error in distances.
     per_marker_ids: [5, 7, 13, 21, 37]
     per_marker_size: [0.087, 0.087, 0.087, 0.087, 0.087]
-    marker_ids: ""                    # "" = all; p. e.g. "21"
+    marker_ids: "5,7,13,21,37"        # only the arena's markers ("" = all): a QR code or
+                                      # a pattern on a box can look like ArUco 0 or 9
     publish_tf: true
     min_area_px: 100.0
 

@@ -73,3 +73,27 @@ def test_restocking_sets_boxes_down_inside_the_drop_zone():
     spot = w.free_spot(None)
     assert spot is not None and w.drop_zone.contains(*spot)
     assert w.in_dock(*w.drop_zone.center)           # boxes there count as delivered
+
+
+def test_restocking_takes_the_drop_zone_when_it_sees_marker_21(tmp_path):
+    """A mission folder without the drop zone: restocking learns it from the landmark
+    mapper as soon as ArUco 21 is seen, shows it and saves zones.yaml."""
+    import types
+    from main_ros.restock import mission_store as ms
+    from main_ros.restock.restock_core import RestockCore, World
+    from main_ros.restock.route import RouteConfig
+    grid = RW.make_world()
+    shown = []
+    seen = {'markers': []}
+    ports = types.SimpleNamespace(landmarks=lambda: seen, show_zones=shown.append)
+    core = types.SimpleNamespace(world=World(str(tmp_path), grid, {}, {}, [], RouteConfig()),
+                                 zone_cfg=ZoneConfig(), p=ports, folder=str(tmp_path),
+                                 _event=lambda text: None)
+    RestockCore._watch_drop_zone(core, 0.0)
+    assert core.world.drop_zone is None
+    seen['markers'] = [{'id': 21, 'x': 1.6, 'y': 0.0, 'yaw': math.pi / 2}]
+    RestockCore._watch_drop_zone(core, 1.0)            # checked every 2 s
+    assert core.world.drop_zone is None
+    RestockCore._watch_drop_zone(core, 2.5)
+    assert core.world.drop_zone is not None and core.world.drop_zone.marker_id == 21
+    assert shown and (tmp_path / ms.ZONES).exists()
