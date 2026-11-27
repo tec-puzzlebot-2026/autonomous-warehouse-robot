@@ -37,6 +37,23 @@ def test_unknown_texts_are_ignored():
     assert decode_qr(frame, cv2.QRCodeDetector(), known=('walnut',)) == []
 
 
+def test_printed_codes_are_reported_as_their_company():
+    companies = {'WALNUT-02': 'walnut', 'EMEZON-03': 'emezon'}
+    frame = np.full((480, 640, 3), 255, np.uint8)
+    frame[100:240, 80:220] = cv2.cvtColor(_qr('WALNUT-02'), cv2.COLOR_GRAY2BGR)
+    frame[100:240, 400:540] = cv2.cvtColor(_qr('NOT-A-BOX'), cv2.COLOR_GRAY2BGR)
+    codes = decode_qr(frame, cv2.QRCodeDetector(), companies=companies)
+    assert [(c['text'], c['raw']) for c in codes] == [('walnut', 'WALNUT-02')]
+
+
+def test_a_dim_low_contrast_code_is_read_on_the_second_try():
+    frame = np.full((480, 640, 3), 255, np.uint8)
+    frame[100:240, 80:220] = cv2.cvtColor(_qr('EMEZON-03'), cv2.COLOR_GRAY2BGR)
+    dim = (frame.astype(np.float32) * 0.12 + 40).astype(np.uint8)     # dark, washed out
+    codes = decode_qr(dim, cv2.QRCodeDetector(), companies={'EMEZON-03': 'emezon'})
+    assert [c['text'] for c in codes] == ['emezon']
+
+
 def test_box_mask_hides_only_the_carried_box():
     n = 360
     angle_min, inc = -math.pi, 2 * math.pi / n

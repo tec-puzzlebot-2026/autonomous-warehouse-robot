@@ -1,0 +1,21 @@
+# =============================================================================
+# qr_companies.yaml — what each box's QR code says -> its company
+# =============================================================================
+# The 12 codes printed for the real boxes (4 per company), from the QR teammate's
+# qr_reader (config/companies.yaml). Read by vision/qr/qr_reader_node.py (the
+# companies are reported in lower case, as in restock.yaml) and by
+# simulation/scripts/make_qr_assets.py (the QR images for Isaac Sim).
+# Not case sensitive. A QR whose text is not here is ignored.
+# =============================================================================
+EMEZON-01: emezon
+EMEZON-02: emezon
+EMEZON-03: emezon
+EMEZON-04: emezon
+WALNUT-01: walnut
+WALNUT-02: walnut
+WALNUT-03: walnut
+WALNUT-04: walnut
+SORIENE-01: soriene
+SORIENE-02: soriene
+SORIENE-03: soriene
+SORIENE-04: soriene
