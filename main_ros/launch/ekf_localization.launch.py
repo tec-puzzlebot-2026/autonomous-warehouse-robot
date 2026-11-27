@@ -5,6 +5,8 @@
 
 Parameters: config/arena_map.yaml (landmarks, start-up mode: fixed pose or auto), config/puzzlebot.yaml
 (r, L, encoder topics) and camera_mount from config/aruco_localization.yaml.
+In the sim (program_manager.yaml, ekf_args): use_sim_time:=true wheel_radius:=0.05
+wheelbase:=0.17 aruco_config:=<config>/aruco_sim.yaml
 Error models: motion_model.yaml (navigation/calibration/motion/ or <calib_dir>/motion/)
 and <calib_dir>/aruco/error_model.yaml.
 """
@@ -34,10 +36,13 @@ def _setup(context):
     cfg = os.path.join(share, 'config')
     robot = _block(os.path.join(cfg, 'puzzlebot.yaml'), 'puzzlebot')
     m = _block(LaunchConfiguration('aruco_config').perform(context), 'camera_mount')
+    r = LaunchConfiguration('wheel_radius').perform(context)
+    L = LaunchConfiguration('wheelbase').perform(context)
     params = {
+        'use_sim_time': LaunchConfiguration('use_sim_time').perform(context) == 'true',
         'calib_dir': LaunchConfiguration('calib_dir').perform(context),
-        'wheel_radius': float(robot.get('wheel_radius', 0.05)),
-        'wheelbase': float(robot.get('wheelbase', 0.19)),
+        'wheel_radius': float(r or robot.get('wheel_radius', 0.05)),
+        'wheelbase': float(L or robot.get('wheelbase', 0.19)),
         'enc_right_topic': robot.get('enc_right_topic', '/VelocityEncR'),
         'enc_left_topic': robot.get('enc_left_topic', '/VelocityEncL'),
         'enc_right_sign': float(robot.get('enc_right_sign', 1.0)),
@@ -60,6 +65,10 @@ def generate_launch_description():
         DeclareLaunchArgument('aruco_config', default_value=os.path.join(
             share, 'config', 'aruco_localization.yaml')),
         DeclareLaunchArgument('start_aruco', default_value='true'),
+        DeclareLaunchArgument('use_sim_time', default_value='false'),
+        # '' = config/puzzlebot.yaml (the real robot); the sim passes its own wheels
+        DeclareLaunchArgument('wheel_radius', default_value=''),
+        DeclareLaunchArgument('wheelbase', default_value=''),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(os.path.join(share, 'launch',
                                                        'aruco_localization.launch.py')),

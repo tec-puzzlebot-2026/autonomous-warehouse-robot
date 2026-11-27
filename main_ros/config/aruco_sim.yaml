@@ -1,0 +1,24 @@
+# The camera of the forklift PuzzleBot in Isaac Sim, in the format of
+# aruco_localization.yaml (read through the aruco_config placeholder of
+# program_manager.yaml, sim mode: landmark_mapper, the EKF, the restocking geometry).
+#
+# The sim base_link lies ON THE FLOOR under the wheel axle (puzzlebot_forklift.urdf),
+# the real one IS the wheel axle (4.7 cm up): so z here is above the floor and
+# base_link_height is 0. The values are those of camera_joint in the sim URDF.
+camera_mount:
+  ros__parameters:
+    x: 0.0939      # m, forward of the axle
+    y: 0.0
+    z: 0.235       # m, above base_link (= the floor in the sim)
+    roll: 0.0
+    pitch: 0.3054  # rad, 17.5 deg down
+    yaw: 0.0
+
+# The ArUco heights are the real ones (place_arucos.py puts the sim markers at the
+# heights of aruco_localization.yaml): keep these lists equal to those.
+aruco_experiment:
+  ros__parameters:
+    marker_height: 0.09
+    per_marker_ids: [5, 7, 13, 21, 37]
+    per_marker_height: [0.045, 0.0485, 0.043, 0.0455, 0.04325]
+    base_link_height: 0.0

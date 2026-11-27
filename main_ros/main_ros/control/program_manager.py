@@ -458,8 +458,8 @@ class ProgramManager(Node):
         if self.restock_ports is None:
             cfg = dict(self.restock_cfg)
             ports = dict(cfg.get('ports', {}) or {})
-            ports.setdefault('aruco_config', os.path.join(self.config_dir,
-                                                          'aruco_localization.yaml'))
+            ports.setdefault('aruco_config', os.path.join(
+                self.config_dir, self.placeholders.get('aruco_config', 'aruco_localization.yaml')))
             topics = dict(ports.get('topics', {}) or {})
             topics.setdefault('cmd_vel', self.placeholders.get('cmd_vel_in', '/cmd_vel'))
             topics.setdefault('scan', self.placeholders.get('scan_raw', '/laser_scan'))

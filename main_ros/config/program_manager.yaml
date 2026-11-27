@@ -45,6 +45,10 @@ modes:
       slam_tuning: ""
       sendero_args: "-p max_vel_x:=0.4 -p acc_lim_x:=0.75 -p max_vel_theta:=1.2 -p collision_check_time:=0.6"
       image_topic: /camera/image_raw        # Isaac renders clean images
+      # The sim camera's mount (base_link on the floor) for the ArUco / box geometry.
+      aruco_config: aruco_sim.yaml
+      # EKF on sim time with the sim wheels (the real ones are in puzzlebot.yaml).
+      ekf_args: "use_sim_time:=true wheel_radius:=0.05 wheelbase:=0.17"
       # Detector models: file names in main_ros/main_ros/vision/models/ (found from
       # where main_ros is installed). onnxruntime on the Spark.
       logo_model: logos_yolo11n.onnx
@@ -73,6 +77,8 @@ modes:
       # place make the wheels slip and the wheel odometry over-count the turn.
       sendero_args: "-p scan_beam_step:=3 -p local_costmap_publish_period_s:=1.0 -p global_costmap_publish_period_s:=5.0 -p max_vel_theta:=0.6 -p acc_lim_theta:=1.0"
       image_topic: /camera/image_rect       # color-corrected: what the models were trained on
+      aruco_config: aruco_localization.yaml # the measured camera mount
+      ekf_args: ""
       # TensorRT FP16 engines built on the Jetson from the .onnx files (same folder).
       logo_model: logos_yolo11n.engine
       box_far_model: boxes_seg_v1.engine
@@ -286,7 +292,7 @@ steps:
   - name: landmark_mapper
     stage: quality
     critical: false
-    cmd: "ros2 run main_ros landmark_mapper --ros-args -p aruco_config:={config_dir}/aruco_localization.yaml -p use_sim_time:={use_sim_time}"
+    cmd: "ros2 run main_ros landmark_mapper --ros-args -p aruco_config:={config_dir}/{aruco_config} -p use_sim_time:={use_sim_time}"
     ready:
       - node: /landmark_mapper
     timeout_s: 30
@@ -305,7 +311,7 @@ steps:
   - name: ekf
     stage: restocking
     critical: false
-    cmd: "ros2 launch main_ros ekf_localization.launch.py start_aruco:=false map:={mission_dir}/ekf_landmarks.yaml"
+    cmd: "ros2 launch main_ros ekf_localization.launch.py start_aruco:=false map:={mission_dir}/ekf_landmarks.yaml aruco_config:={config_dir}/{aruco_config} {ekf_args}"
     ready:
       - message: /ekf/status
     timeout_s: 40
