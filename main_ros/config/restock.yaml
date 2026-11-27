@@ -79,7 +79,7 @@ restock:
   # Where boxes go: docks = the company's dock (the drop zone when it has none or the QR
   # cannot be read); drop_zone = every box to the drop zone (zones, below).
   deliver_to: docks
-  min_far_conf: 0.85         # far detector confidence that starts a box task (the far
+  min_far_conf: 0.90         # far detector confidence that starts a box task (the far
                              # model itself reports from 0.40, shown in the overlay)
   watch_while_driving: true  # a box seen while driving to a viewpoint stops the patrol
                              # there; after the box, the route goes on from that viewpoint

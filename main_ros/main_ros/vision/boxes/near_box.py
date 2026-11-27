@@ -39,7 +39,28 @@ DEFAULTS = {
     "nms_iou": 0.5,
     "max_det": 10,
     "sticky": 0.8,
+    # Colour gate (0 = off): a detection is kept only if at least this fraction of the
+    # pixels in the middle of its box have the carton colour (HSV, OpenCV ranges). It
+    # throws out what the network mistakes for a box: a white wall, an ArUco marker.
+    "min_color_fraction": 0.0,
+    "hsv_lower": [8, 27, 55],
+    "hsv_upper": [40, 235, 255],
 }
+
+
+def color_fraction(frame, box, hsv_lower, hsv_upper, inset=0.2):
+    """Fraction of the pixels in the middle of `box` (inset on every side) whose colour
+    lies in the HSV band."""
+    H, W = frame.shape[:2]
+    x1, y1, x2, y2 = [float(v) for v in box[:4]]
+    dx, dy = inset * (x2 - x1), inset * (y2 - y1)
+    c0, c1 = max(0, int(x1 + dx)), min(W, int(x2 - dx))
+    r0, r1 = max(0, int(y1 + dy)), min(H, int(y2 - dy))
+    if c1 <= c0 or r1 <= r0:
+        return 0.0
+    hsv = cv2.cvtColor(frame[r0:r1, c0:c1], cv2.COLOR_BGR2HSV)
+    inside = cv2.inRange(hsv, np.array(hsv_lower, np.uint8), np.array(hsv_upper, np.uint8))
+    return float(np.count_nonzero(inside)) / inside.size
 
 
 def load_settings(path=None, model_path=None):
@@ -337,7 +358,7 @@ class NearBoxDetector:
             outs = self.be(blob)
             t2 = time.perf_counter()
             nc = len(self.s["classes"])
-            dets = decode(outs[0], nc, self.s, meta)
+            dets = self._gate(frame, decode(outs[0], nc, self.s, meta))
             self.n_det = len(dets)
             self._keep_all(dets)
             det = select_target(dets, self.s["min_size_px"], self.prev, self.s["sticky"])
@@ -349,6 +370,15 @@ class NearBoxDetector:
             self.timing = {"pre": 1e3 * (t1 - t0), "infer": 1e3 * (t2 - t1), "post": 1e3 * (t3 - t2)}
         self.prev = target["box"] if target else None
         return target
+
+    def _gate(self, frame, dets):
+        """Only confident detections that look like a carton (conf, colour gate)."""
+        dets = [d for d in dets if float(d["conf"]) >= float(self.s["conf"])]
+        need = float(self.s.get("min_color_fraction", 0.0))
+        if need > 0:
+            dets = [d for d in dets if color_fraction(frame, d["box"], self.s["hsv_lower"],
+                                                      self.s["hsv_upper"]) >= need]
+        return dets
 
     def _keep_all(self, dets):
         """Every detection big enough (the far detector reports them all, nearest first)."""
@@ -369,6 +399,7 @@ class NearBoxDetector:
         polys = r.masks.xy if r.masks is not None else [None] * len(boxes)
         dets = [{"cls": int(c), "conf": float(cf), "box": b.tolist(), "poly": p}
                 for c, cf, b, p in zip(r.boxes.cls.cpu().numpy(), r.boxes.conf.cpu().numpy(), boxes, polys)]
+        dets = self._gate(frame, dets)
         self.n_det = len(dets)
         self._keep_all(dets)
         det = select_target(dets, self.s["min_size_px"], self.prev, self.s["sticky"])

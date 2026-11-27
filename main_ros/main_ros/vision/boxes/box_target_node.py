@@ -104,8 +104,24 @@ class BoxTargetNode(Node):
         if not model:
             raise SystemExit("set the model parameter:  --ros-args -p model:=/path/best.engine")
         self.det = NearBoxDetector(os.path.expanduser(model), settings, backend)
-        self.get_logger().info("backend %s | roi %s -> net %s | min size %s px | topic %s" % (
-            self.det.be.name, self.det.s["roi"], self.det.s["net"], self.det.s["min_size_px"], topic))
+        # Overrides of the yaml (0 / empty = keep the yaml's): a higher confidence and
+        # the carton colour gate (near_box.py), so walls and markers are not boxes.
+        min_conf = float(self.declare_parameter("min_conf", 0.0).value)
+        if min_conf > 0:
+            self.det.s["conf"] = min_conf
+        min_color = float(self.declare_parameter("min_color_fraction", -1.0).value)
+        if min_color >= 0:
+            self.det.s["min_color_fraction"] = min_color
+        lo = list(self.declare_parameter("hsv_lower", [0]).value)
+        hi = list(self.declare_parameter("hsv_upper", [0]).value)
+        if len(lo) == 3 and len(hi) == 3:
+            self.det.s["hsv_lower"], self.det.s["hsv_upper"] = lo, hi
+        s = self.det.s
+        self.get_logger().info(
+            "backend %s | roi %s -> net %s | min size %s px | conf >= %.2f | carton colour "
+            ">= %.0f %% | topic %s" % (self.det.be.name, s["roi"], s["net"], s["min_size_px"],
+                                       float(s["conf"]), 100 * float(s.get("min_color_fraction", 0)),
+                                       topic))
 
         qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT, history=HistoryPolicy.KEEP_LAST)
         self.sub = self.create_subscription(Image, topic, self.on_image, qos)

@@ -15,7 +15,10 @@ frame: [640, 480]                  # camera frame the ROI below is written for
 roi: [0, 0, 640, 480]              # whole frame: boxes on the floor and on both rack levels
 net: [640, 640]
 min_size_px: 12                    # a 12 cm box ~3 m away is ~15 px tall
-conf: 0.40
+conf: 0.90                         # only confident boxes (shown in /box_far/debug and used)
+min_color_fraction: 0.15           # carton colour gate (near_box.py): at least 15 % of the
+hsv_lower: [8, 27, 55]             # middle of the box is carton-coloured, so an ArUco, a
+hsv_upper: [40, 235, 255]          # white wall or a rack is not a box. 0 = off.
 nms_iou: 0.5
 max_det: 20
 sticky: 1.0                        # no tracking: every viewpoint is a fresh look

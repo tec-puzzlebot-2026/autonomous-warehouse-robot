@@ -336,7 +336,9 @@ steps:
 
   - name: box_target
     stage: restocking
-    cmd: "ros2 run main_ros box_target --ros-args -p model:={box_near_model} -p enabled:=false -p image_topic:={image_topic} -p use_sim_time:={use_sim_time}"
+    # min_conf / min_color_fraction: only a confident, carton-coloured detection is the
+    # box (near_box.py): a white wall or a marker in front of the robot is not.
+    cmd: "ros2 run main_ros box_target --ros-args -p model:={box_near_model} -p enabled:=false -p min_conf:=0.6 -p min_color_fraction:=0.15 -p image_topic:={image_topic} -p use_sim_time:={use_sim_time}"
     ready:
       - node: /box_target
     timeout_s: 60

@@ -126,7 +126,7 @@ class RestockSettings:
     deliver_to: str = 'docks'
     # Box selection.
     max_far_range: float = 3.0         # m, farther sightings are ignored (seen again later)
-    min_far_conf: float = 0.85         # far detector confidence that starts a box task
+    min_far_conf: float = 0.90         # far detector confidence that starts a box task
     # With boxes_always_on: a box seen while driving to a viewpoint stops the patrol
     # there (the route resumes at that viewpoint after the box).
     watch_while_driving: bool = True
