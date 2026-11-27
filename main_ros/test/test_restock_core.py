@@ -368,11 +368,11 @@ def test_full_run_delivers_floor_and_rack_boxes(tmp_path):
     log = MS.read_yaml(os.path.join(ports.folder, MS.LOG))
     assert len(log['runs'][0]['boxes']) == 2
     assert os.path.isfile(os.path.join(ports.folder, MS.ROUTE))
-    # one network at a time
+    # one network at a time, besides the far box detector (boxes_always_on)
     on = set()
     for _, stream, state in ports.enable_log:
         (on.add if state else on.discard)(stream)
-        assert len(on - {'qr'}) <= 1, on
+        assert len(on - {'qr', 'box_far'}) <= 1, on
 
 
 def test_viewpoints_use_the_quick_profile_and_boxes_the_precise_one(tmp_path):

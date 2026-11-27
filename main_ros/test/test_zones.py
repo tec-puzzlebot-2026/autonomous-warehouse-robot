@@ -88,7 +88,8 @@ def test_restocking_takes_the_drop_zone_when_it_sees_marker_21(tmp_path):
     ports = types.SimpleNamespace(landmarks=lambda: seen, show_zones=shown.append)
     core = types.SimpleNamespace(world=World(str(tmp_path), grid, {}, {}, [], RouteConfig()),
                                  zone_cfg=ZoneConfig(), p=ports, folder=str(tmp_path),
-                                 _event=lambda text: None)
+                                 _event=lambda text: None,
+                                 s=types.SimpleNamespace(companies=[], opening_search=2.5))
     RestockCore._watch_drop_zone(core, 0.0)
     assert core.world.drop_zone is None
     seen['markers'] = [{'id': 21, 'x': 1.6, 'y': 0.0, 'yaw': math.pi / 2}]
@@ -97,3 +98,16 @@ def test_restocking_takes_the_drop_zone_when_it_sees_marker_21(tmp_path):
     RestockCore._watch_drop_zone(core, 2.5)
     assert core.world.drop_zone is not None and core.world.drop_zone.marker_id == 21
     assert shown and (tmp_path / ms.ZONES).exists()
+
+
+def test_the_dock_openings_are_found_without_logos():
+    from main_ros.restock.docks import find_openings
+    grid = RW.make_world()
+    ops = find_openings(grid)
+    assert len(ops) == 3 and all(o.company == '' for o in ops)
+    xs = sorted(o.entrance[0] for o in ops)
+    mids = sorted(0.5 * (a + b) for a, b in RW.DOCKS.values())
+    assert all(abs(x - m) < 0.06 for x, m in zip(xs, mids))       # centered on the openings
+    assert all(abs(math.sin(o.entrance[2]) - 1.0) < 1e-6 for o in ops)   # facing in (+y)
+    near = find_openings(grid, near=(1.1, RW.H), search=0.5)
+    assert len(near) == 1

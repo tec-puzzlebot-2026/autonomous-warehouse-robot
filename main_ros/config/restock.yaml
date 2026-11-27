@@ -79,6 +79,11 @@ restock:
   # Where boxes go: docks = the company's dock (the drop zone when it has none or the QR
   # cannot be read); drop_zone = every box to the drop zone (zones, below).
   deliver_to: docks
+  boxes_always_on: true      # the far box detector runs the whole restocking (false: only
+                             # at the viewpoints; the Jetson may need that)
+  opening_search: 2.5        # m round the drop zone where the dock openings are looked for
+  opening_look_standoff: 0.75  # m in front of an opening to read its logo
+  opening_look_turn_deg: 15.0  # turned toward the logo (left of the opening, seen from inside)
 
   # ── which box ────────────────────────────────────────────────────────────
   max_far_range: 3.0         # m, farther sightings are ignored (seen again from a closer viewpoint)
@@ -108,7 +113,10 @@ restock:
   disagreement_s: 3.0        # ... for this long while driving: stop and re-localize
 
   # ── survey (only when a company has no dock in the mission folder) ────────
-  survey: true
+  survey: false              # true: if a company has no dock, first drive round the map
+                             # looking for its logo. false: the docks without a known
+                             # company are the openings near the drop zone; the logo
+                             # detector reads each one when a box is taken there.
   survey_look_s: 1.5
 
   # ── inspection route (restock/route.py RouteConfig) ───────────────────────

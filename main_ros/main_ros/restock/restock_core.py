@@ -13,18 +13,23 @@ Mission level
   LOAD        the mission folder: map, docks, markers (full mode: the folder just saved)
   LOCALIZE    restocking mode: the EKF searches for an ArUco (turning in place; moving to
               a new spot when that fails), its pose seeds Planisferio, Planisferio confirms
-  SURVEY      only if a company has no dock: look at the walls with the logo detector
+  SURVEY      only with survey: true and a company without a dock: look at the walls
+              with the logo detector (survey: false: see OPENING below)
   PLAN_ROUTE  the inspection route along every obstacle edge (route.py)
-  PATROL      drive to the next viewpoint, stop, run the FAR box detector for ~2 s;
-              the nearest new box starts a BOX_TASK
+  PATROL      drive to the next viewpoint, stop, collect the FAR box detector for ~2 s
+              (with boxes_always_on it runs the whole time); the nearest new box
+              starts a BOX_TASK
   RESUME      back to the viewpoint where the box was seen (more boxes may be there)
 
 Box task (one box at a time)
 
   APPROACH ─> ACQUIRE ─> INSPECT (faces, QR) ─> ALIGN ─> CLOSE_IN ─> PICK ─> DELIVER
      DELIVER ─> CONFIRM_LOGO ─> DOCK_ALIGN ─> DOCK_IN ─> SET_DOWN ─> DOCK_OUT ─> DONE
-     no QR:     DELIVER to the free area ─> SET_DOWN (floor) ─> INSPECT around it ─> ALIGN ...
-     no dock:   DELIVER to the free area ─> SET_DOWN (floor) ─> DONE (left there, marked)
+     company's dock unknown: OPENING_GO (in front of the nearest dock opening by the
+                drop zone) ─> OPENING_LOOK (logo detector names it) ─> its company:
+                DOCK_ALIGN ...; another company: remembered, next opening
+     no QR:     DELIVER to the drop zone (or a free area) ─> SET_DOWN (floor) ─> INSPECT around it ─> ALIGN ...
+     no dock:   DELIVER to the drop zone (or a free area) ─> SET_DOWN (floor) ─> DONE (left there, marked)
 
 Operator: pause() cancels motion and any forklift action and keeps the place in the
 task; resume() re-enters the interrupted step (a forklift step restarts from ALIGN).
@@ -46,7 +51,7 @@ from dataclasses import asdict, dataclass, field
 
 from main_ros.restock import geometry as G
 from main_ros.restock import mission_store as ms
-from main_ros.restock.docks import Dock, find_docks, free_area_near
+from main_ros.restock.docks import Dock, find_docks, find_openings, free_area_near
 from main_ros.restock.zones import (DROP_ZONE, Zone, ZoneConfig, drop_zone,
                                     zones_from_markers)
 from main_ros.restock.geometry import wrap
@@ -68,11 +73,13 @@ RESUME_AT = {
     'CLOSE_IN': 'ALIGN', 'PICK': 'ALIGN', 'BACK_OFF': 'ALIGN', 'ALIGN_CHECK': 'ALIGN',
     'DOCK_ALIGN': 'DELIVER_GO', 'DOCK_IN': 'DELIVER_GO', 'DOCK_OUT': 'DELIVER_GO',
     'POST_PICK': 'DELIVER_GO', 'SURVEY_LOOK': 'SURVEY_GO', 'PATROL_LOOK': 'PATROL_LOOK',
+    'OPENING_LOOK': 'OPENING_GO',
 }
 # SET_DOWN restarts itself (the box is still held), see _enter_SET_DOWN.
 
 # Phases in which Planisferio and the EKF are compared (the robot drives on the map).
-CROSSCHECK = ('PATROL_GO', 'RESUME_GO', 'APPROACH', 'INSPECT_GO', 'DELIVER_GO', 'SURVEY_GO')
+CROSSCHECK = ('PATROL_GO', 'RESUME_GO', 'APPROACH', 'INSPECT_GO', 'DELIVER_GO', 'SURVEY_GO',
+              'OPENING_GO')
 
 VISION = ('box_far', 'box_target', 'qr', 'logos')
 
@@ -104,6 +111,13 @@ class RestockSettings:
     read_s: float = 2.0                # QR reading at a face
     acquire_s: float = 1.5             # near detector after the approach
     logo_look_s: float = 1.5
+    # Docks without a logo position from stage 2: the openings near the drop zone are
+    # found on the map; the logo detector reads each one's company from here.
+    opening_search: float = 2.5        # m around the drop zone
+    opening_look_standoff: float = 0.75  # m in front of the opening's mouth
+    opening_look_turn_deg: float = 15.0  # turned toward the logo (left of the opening)
+    # The far box detector runs the whole restocking (not only at the viewpoints).
+    boxes_always_on: bool = True
     qr_pair_dt: float = 0.3            # s, QR and box outline must come from ~ the same frame
     logo_min_conf: float = 0.6
     require_logo: bool = False         # True: enter a dock only after its logo was seen
@@ -193,6 +207,16 @@ class World:
         self.route_cfg = route_cfg
         self.trav = grid.traversable(route_cfg.robot_radius, route_cfg.clearance_margin)
         self.dropped = []                      # (x, y) of boxes left on the floor
+        self.openings = []                     # [Dock] whose company is not known yet
+
+    def find_openings(self, search=2.5):
+        """The dock openings near the drop zone (or anywhere) that no known dock is."""
+        near = self.drop_zone.center if self.drop_zone is not None else None
+        known = [d.entrance for d in self.docks.values()]
+        self.openings = [o for o in find_openings(self.grid, near, search)
+                         if all(math.hypot(o.entrance[0] - k[0], o.entrance[1] - k[1]) > 0.25
+                                for k in known)]
+        return self.openings
 
     @classmethod
     def from_folder(cls, folder, route_cfg, zone_cfg=None):
@@ -366,6 +390,8 @@ class RestockCore:
         show = getattr(self.p, 'show_zones', None)
         if show:
             show(w.zones)
+        if any(c not in w.docks for c in self.s.companies):
+            w.find_openings(self.s.opening_search)    # now near the drop zone
         try:
             ms.write_yaml(os.path.join(self.folder, ms.ZONES),
                           {'zones': [q.to_dict() for q in w.zones]})
@@ -426,6 +452,8 @@ class RestockCore:
             self.p.enable(v, False)
 
     def _vision(self, *on):
+        if self.s.boxes_always_on and self.world is not None:
+            on = tuple(on) + ('box_far',)
         for v in VISION:
             self.p.enable(v, v in on)
 
@@ -495,6 +523,11 @@ class RestockCore:
         show = getattr(self.p, 'show_zones', None)
         if show:
             show(w.zones)
+        if missing:
+            ops = w.find_openings(self.s.opening_search)
+            self._event(f'{len(ops)} dock opening(s) without a known company'
+                        + (' near the drop zone' if w.drop_zone else '')
+                        + ': the logo detector reads them when a box goes there')
         if self.mission == 'full' or self.p.slam_localized():
             self._goto(self._after_localize())
         else:
@@ -1110,6 +1143,10 @@ class RestockCore:
         if self.s.deliver_to == 'drop_zone' and self.world.drop_zone is not None:
             self._goto('FLOOR_GO', why='to the drop zone')
             return
+        if box.company is not None and box.company not in self.world.docks \
+                and self.world.openings:
+            self._goto('OPENING_GO', tried=list(tried))
+            return
         if box.company is None or box.company not in self.world.docks:
             why = 'data missing' if box.company is None else f'no dock known for {box.company}'
             self._goto('FLOOR_GO', why=why)
@@ -1122,6 +1159,66 @@ class RestockCore:
                   lambda r: self._hold_error(f'{box.id}: cannot reach the dock ({r})',
                                              'DELIVER_GO', dock=d.company, tried=tried),
                   'to the dock')
+
+    # ── an opening whose company is not known: read its logo ─────────────
+    def _opening_look_pose(self, o):
+        th = o.entrance[2]                          # facing into the opening
+        mouth = (0.5 * (o.entrance[0] + o.inside[0]), 0.5 * (o.entrance[1] + o.inside[1]))
+        d = self.s.opening_look_standoff
+        return (mouth[0] - d * math.cos(th), mouth[1] - d * math.sin(th),
+                wrap(th + math.radians(self.s.opening_look_turn_deg)))
+
+    def _enter_OPENING_GO(self, tried=()):
+        box = self.box
+        here = self.p.slam_pose() or (0.0, 0.0, 0.0)
+        left = [o for o in self.world.openings if tuple(o.entrance) not in
+                [tuple(t) for t in tried]]
+        if not left:
+            self._goto('FLOOR_GO', why=f'no opening shows the {box.company} logo')
+            return
+        o = min(left, key=lambda q: math.hypot(q.entrance[0] - here[0], q.entrance[1] - here[1]))
+        self.ph['opening'] = o
+        self.detail = f'{box.id}: to a dock opening, to read its logo'
+        self._nav(self._opening_look_pose(o), self.s.profile_carrying,
+                  lambda: self._goto('OPENING_LOOK', opening=o, tried=list(tried)),
+                  lambda r: (self._event(f'{box.id}: opening unreachable ({r})'),
+                             self._goto('OPENING_GO', tried=list(tried) + [o.entrance])),
+                  'to the opening')
+
+    def _enter_OPENING_LOOK(self, opening=None, tried=()):
+        self.ph.update(opening=opening, tried=list(tried))
+        self.detail = f'{self.box.id}: reading the logo of the opening'
+        self._start_look(('logos',), self.s.logo_look_s)
+
+    def _tick_OPENING_LOOK(self, now):
+        if not self._look_done(now):
+            return
+        box, ph = self.box, self.ph
+        counts = {}
+        for _, d in self._messages('logos'):
+            for det in d.get('detections', []):
+                if float(det.get('conf', 0.0)) >= self.s.logo_min_conf:
+                    c = str(det.get('company'))
+                    counts[c] = counts.get(c, 0) + 1
+        self._vision()
+        o = ph['opening']
+        tried = ph['tried'] + [o.entrance]
+        if not counts:
+            self._event(f'{box.id}: no logo read at the opening ({o.entrance[0]:.2f}, '
+                        f'{o.entrance[1]:.2f})')
+            self._goto('OPENING_GO', tried=tried)
+            return
+        company = max(counts, key=counts.get)
+        o.company = company                           # this opening is now a known dock
+        self.world.docks[company] = o
+        self.world.openings = [q for q in self.world.openings if q is not o]
+        self._save_docks()
+        self._event(f'{box.id}: the opening at ({o.entrance[0]:.2f}, {o.entrance[1]:.2f}) is '
+                    f'the {company} dock')
+        if company == box.company:
+            self._goto('DOCK_ALIGN', dock=company)
+        else:
+            self._goto('OPENING_GO', tried=tried)
 
     def _enter_CONFIRM_LOGO(self, dock=None, tried=()):
         self.ph.update(dock=dock or self.box.company, tried=list(tried))

@@ -220,3 +220,67 @@ def free_area_near(grid, traversable, points, radius_needed=0.45, search=3.0):
         if score > best_score:
             best, best_score = (x, y), score
     return best
+
+
+def find_openings(grid, near=None, search=2.5, min_area=0.06, min_depth=0.25,
+                  entrance_standoff=0.35, inside_fraction=0.6, max_inside=0.6):
+    """Every dock opening of the map (a recess off the main room), without logos.
+
+    The room is the free floor that a disk ~0.5 m wide can sweep; a trailer is
+    narrower than that, so what is left of the free floor beyond the room's walls
+    are the trailers. near: only openings within `search` m of this point (the drop
+    zone). Returns [Dock] with company '' (the logo at the opening names it later).
+    """
+    import cv2
+    free = grid.free().astype(np.uint8)
+    rad = max(1, int(math.ceil(0.25 / grid.res)))
+    disk = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * rad + 1, 2 * rad + 1))
+    opened = cv2.morphologyEx(free, cv2.MORPH_OPEN, disk)
+    n, lab = cv2.connectedComponents(opened, connectivity=8)
+    if n <= 1:
+        return []
+    room = lab == int(np.argmax(np.bincount(lab[lab > 0].ravel())))
+    rr, cc = np.nonzero(room)
+    r0, r1, c0, c1 = rr.min(), rr.max(), cc.min(), cc.max()
+    recess = (free > 0) & ~room
+    m, rlab = cv2.connectedComponents(recess.astype(np.uint8), connectivity=8)
+    touch = cv2.dilate(room.astype(np.uint8), np.ones((3, 3), np.uint8)) > 0
+    out = []
+    for k in range(1, m):
+        cells = rlab == k
+        if cells.sum() * grid.res ** 2 < min_area:
+            continue
+        ys, xs = np.nonzero(cells)
+        cy, cx = ys.mean(), xs.mean()
+        if r0 <= cy <= r1 and c0 <= cx <= c1:
+            continue                               # a gap inside the room, not a trailer
+        mouth = cells & touch
+        if not mouth.any():
+            continue
+        my, mx = np.nonzero(mouth)
+        mouth_xy = (grid.origin[0] + (mx.mean() + 0.5) * grid.res,
+                    grid.origin[1] + (my.mean() + 0.5) * grid.res)
+        cen = (grid.origin[0] + (cx + 0.5) * grid.res, grid.origin[1] + (cy + 0.5) * grid.res)
+        into = math.atan2(cen[1] - mouth_xy[1], cen[0] - mouth_xy[0])
+        # snap the direction to the room's axes (walls are straight)
+        into = round(into / (math.pi / 2)) * (math.pi / 2)
+        wx = grid.origin[0] + (xs + 0.5) * grid.res
+        wy = grid.origin[1] + (ys + 0.5) * grid.res
+        along = (wx - mouth_xy[0]) * math.cos(into) + (wy - mouth_xy[1]) * math.sin(into)
+        across = -(wx - mouth_xy[0]) * math.sin(into) + (wy - mouth_xy[1]) * math.cos(into)
+        depth = float(along.max()) + grid.res / 2
+        width = float(across.max() - across.min()) + grid.res
+        if depth < min_depth:
+            continue
+        mid = float(0.5 * (across.max() + across.min()))
+        mouth_xy = (mouth_xy[0] - mid * math.sin(into), mouth_xy[1] + mid * math.cos(into))
+        if near is not None and math.hypot(mouth_xy[0] - near[0],
+                                           mouth_xy[1] - near[1]) > search:
+            continue
+        entrance = (mouth_xy[0] - entrance_standoff * math.cos(into),
+                    mouth_xy[1] - entrance_standoff * math.sin(into), wrap(into))
+        go_in = min(inside_fraction * depth, max_inside)
+        inside = (mouth_xy[0] + go_in * math.cos(into), mouth_xy[1] + go_in * math.sin(into),
+                  wrap(into))
+        out.append(Dock('', entrance, inside, width, depth, mouth_xy))
+    return out
