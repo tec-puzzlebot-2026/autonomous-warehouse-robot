@@ -213,9 +213,12 @@ setup(
             #   forklift_controller  owns the Tang's serial port (start it first)
             #   forklift_operate     ROS interface: forklift/target_height_mm, IR readings
             #   forklift_pick_back   supervised Pick & Back ("Ready Pick Up" -> Done/Error)
+            #   forklift_calibrate   lift calibration by keys over SSH (run before the first use)
             'forklift_controller = main_ros.manipulation.control_forklift.controller:main',
             'forklift_operate = main_ros.manipulation.control_forklift.operate:main',
             'forklift_pick_back = main_ros.manipulation.control_forklift.pick_back:main',
+            # lift calibration from an SSH terminal (keys; the teammate's `calibrar`)
+            'forklift_calibrate = main_ros.manipulation.control_forklift.terminal:main',
             # PickBox / SetDownBox -> forklift_pick_back; Isaac lift in place of the Tang
             'forklift_bridge = main_ros.manipulation.forklift_bridge:main',
             'sim_forklift = main_ros.manipulation.sim_forklift:main',

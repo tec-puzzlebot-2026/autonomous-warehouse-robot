@@ -1,0 +1,39 @@
+IO_LOC "clk" 52;
+IO_PORT "clk" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+
+// Onboard USB-UART RX from PC/Jetson; no external jumper.
+IO_LOC "uart_rx_pin" 18;
+IO_PORT "uart_rx_pin" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+IO_LOC "usb_uart_tx" 17;
+IO_PORT "usb_uart_tx" IO_TYPE=LVCMOS33;
+
+// Legacy HDL names retained; physical driver wiring is channel A.
+// Tang pin 25 -> L298N IN1; pin 26 -> IN2; pin 27 -> ENA.
+IO_LOC "in3" 25;
+IO_PORT "in3" IO_TYPE=LVCMOS33 PULL_MODE=DOWN;
+
+IO_LOC "in4" 26;
+IO_PORT "in4" IO_TYPE=LVCMOS33 PULL_MODE=DOWN;
+
+IO_LOC "enb" 27;
+IO_PORT "enb" IO_TYPE=LVCMOS33 PULL_MODE=DOWN;
+
+
+IO_LOC "enc_a" 28;
+IO_PORT "enc_a" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+IO_LOC "enc_b" 29;
+IO_PORT "enc_b" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+// Nano Every D1/TX, exclusivamente a traves del divisor a 3.3 V.
+IO_LOC "ir_rx_pin" 30;
+IO_PORT "ir_rx_pin" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+
+IO_LOC "led[0]" 10;
+IO_LOC "led[1]" 11;
+IO_LOC "led[2]" 13;
+IO_LOC "led[3]" 14;
+IO_LOC "led[4]" 15;
+IO_LOC "led[5]" 16;

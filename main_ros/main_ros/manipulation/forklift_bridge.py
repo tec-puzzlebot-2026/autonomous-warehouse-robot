@@ -17,9 +17,11 @@ back out to the start pose), on top of `forklift_operate` (the real Tang board) 
               relays its drive commands to the base, reports its phases as feedback,
               and answers success on "Done", failure on "Error: <reason>".
               Level 2 (the 200 mm shelf) has no automatic pick yet: it fails cleanly.
-  SetDownBox  lowers the forks until the box rests on its runners
-              (set_down_height_mm), and waits for ARRIVED. The base does not move:
-              the Program Manager backs away afterwards (the forks slide out).
+  SetDownBox  the teammate's tested deposit (SimForklift check_physics: pick, carry,
+              deposit): lower the forks to the bottom (set_down_height_mm, 0), wait
+              for ARRIVED, then let the box settle on its runners (set_down_settle_s)
+              before answering. The base does not move: the Program Manager backs
+              away afterwards, slowly, and the forks slide out from under the box.
 
 pick_back refuses to drive on a topic that anyone else publishes on, and our base
 topic always has other publishers (Sendero, the Program Manager). So pick_back drives
@@ -30,7 +32,8 @@ commands to the base (base_cmd_topic); otherwise it is silent.
 Parameters:
   pick_config         file name in share/main_ros/config/forklift/ (or a full path)
   base_cmd_topic      /cmd_vel in the sim, /cmd_vel_in on the robot (the relay)
-  set_down_height_mm  lift height that leaves the box on its runners (default 5)
+  set_down_height_mm  lift height for the deposit (default 0: forks at the bottom)
+  set_down_settle_s   still time after ARRIVED, the box settles (default 1.0, ROS time)
   pick_timeout_s      give up on a pick after this long (default 240, wall time)
 """
 # Author: Raymundo Gomez
@@ -67,7 +70,8 @@ class ForkliftBridge(Node):
         p = self.declare_parameter
         self.cfg_file = config_path(p('pick_config', 'pick_sim.json').value)
         self.base_topic = p('base_cmd_topic', '/cmd_vel').value
-        self.set_down_mm = float(p('set_down_height_mm', 5.0).value)
+        self.set_down_mm = float(p('set_down_height_mm', 0.0).value)
+        self.set_down_settle = float(p('set_down_settle_s', 1.0).value)
         self.pick_timeout = float(p('pick_timeout_s', 240.0).value)
         self.set_down_timeout = float(p('set_down_timeout_s', 30.0).value)
         with open(self.cfg_file) as f:
@@ -100,6 +104,10 @@ class ForkliftBridge(Node):
             f'forklift bridge: PickBox -> forklift_pick_back ({os.path.basename(self.cfg_file)}), '
             f'drive {self.pick_cmd_topic} -> {self.base_topic}; SetDownBox -> lift to '
             f'{self.set_down_mm:.0f} mm')
+
+    def now_s(self):
+        """ROS time [s] (simulation time with use_sim_time)."""
+        return self.get_clock().now().nanoseconds * 1e-9
 
     # ── topics ───────────────────────────────────────────────────────────
     def accept(self, _goal):
@@ -243,6 +251,12 @@ class ForkliftBridge(Node):
                 if acked and state.startswith(('FAULT', 'GOAL_NOT_REACHED')):
                     return False, 'lift: ' + state, False
                 if acked and state == 'ARRIVED':
+                    self.feedback(goal_handle, SetDownBox, 'forks down; the box settles')
+                    t_end = self.now_s() + self.set_down_settle
+                    while self.now_s() < t_end:
+                        if goal_handle.is_cancel_requested:
+                            return False, 'canceled', True
+                        time.sleep(0.05)
                     self.feedback(goal_handle, SetDownBox, 'box on the floor')
                     return True, '', False
                 if time.monotonic() - sent > self.set_down_timeout:
