@@ -277,10 +277,11 @@ class SimPorts:
             vis = [v for v in self._visible(0.9)]
             if not vis:
                 return [(t, {'found': False, 'stamp': t}) for t in stamps]
-            _, b, bb = vis[0]
+            _, b, bb = vis[0]                         # like the model: the nearest one
             self._near = (b, bb)
-            return [(t, {'found': True, 'stamp': t, 'box': bb, 'frame': [640, 480]})
-                    for t in stamps]
+            alls = [v[2] + [0.9] for v in vis]
+            return [(t, {'found': True, 'stamp': t, 'box': bb, 'frame': [640, 480],
+                         'all': alls}) for t in stamps]
         if stream == 'qr':
             vis = self._visible(0.9)
             codes = []
@@ -518,6 +519,25 @@ def test_vision_servo_logs_what_it_sees_and_commands(tmp_path):
     assert lines and all('-> v ' in t for t in lines)
     v = [float(t.split('-> v ')[1].split()[0]) for t in lines]
     assert all(x == 0.0 or x >= core.s.servo_min_v - 1e-9 for x in v)   # no creeping
+
+
+def test_vision_servo_keeps_its_box_when_the_near_model_picks_another(tmp_path):
+    """Two boxes in the image: the near model's own pick is the nearer one, the servo
+    takes the one it is after (nearest to where it tracks it), from the 'all' list."""
+    ours = SimBox(1.0, 2.0, math.pi, 0, 'emezon', 'front')
+    other = SimBox(0.85, 1.72, math.pi, 0, 'walnut', 'front')
+    core, ports = make_core(tmp_path, [ours, other], settings=rc.RestockSettings(**VISION))
+    ports.pose = [0.35, 1.9, 0.0]
+    cam = ports.camera()
+    vis = ports._visible(0.9)
+    assert len(vis) == 2 and vis[0][1] is other          # the model would pick "other"
+    core.box = rc.Box('box_01', ours.x, ours.y, 0)
+    core.ph = {}
+    src, t, d = core._pick_detection(ports.t - 0.6, cam, tuple(ports.pose))
+    sg = G.locate_box(cam, tuple(ports.pose), d['box'], core.spec)
+    assert math.hypot(sg.x - ours.x, sg.y - ours.y) < 0.1, (sg.x, sg.y)
+    core.box = rc.Box('box_02', 3.0, 0.5, 0)               # nothing of ours in view
+    assert core._pick_detection(ports.t - 0.6, cam, tuple(ports.pose)) is None
 
 
 def test_vision_approach_ends_lost_when_the_box_leaves_the_image(tmp_path):

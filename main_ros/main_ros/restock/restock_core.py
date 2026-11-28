@@ -125,6 +125,8 @@ class RestockSettings:
     servo_guard_half_width: float = 0.10
     servo_log_s: float = 1.0           # s between servo lines in the log
     rack_square_max_deg: float = 15.0  # rack box: turn by the map's edge only if this close
+    # A detection is our box if it lands this close to where we track it on the map.
+    servo_match_m: float = 0.40
     servo_handoff_margin: float = 0.25  # m: servo takes over at servo_start_gap + this
     servo_handoff_still_s: float = 4.0  # or when Sendero has not moved the robot this long
     servo_timeout_s: float = 90.0
@@ -1110,16 +1112,13 @@ class RestockCore:
         edge in the image at its level's known height (works with the top cut off, a
         rack box close to the camera); its 12 cm height in pixels (whole box only);
         else the last measurement minus the odometry driven since."""
-        src = 'near'
-        msgs = [(t, d) for t, d in self.p.messages('box_target', now - 0.6) if d.get('found')]
-        if not msgs:            # still too far for the near model: steer by the far one
-            src = 'far'
-            msgs = [(t, d) for t, d in self.p.messages('box_far', now - 0.6)
-                    if d.get('found') and d.get('box')]
         cam, pose = self.p.camera(), self.p.slam_pose()
-        if not msgs or cam is None or pose is None:
+        if cam is None or pose is None:
             return None
-        t_det, d = msgs[-1]
+        pick = self._pick_detection(now - 0.6, cam, pose)
+        if pick is None:
+            return None
+        src, t_det, d = pick
         x1, y1, x2, y2 = [float(v) for v in d['box'][:4]]
         fw, fh = (d.get('frame') or [2 * cam.cx, 2 * cam.cy])[:2]
         touch = d.get('touches') or {}
@@ -1152,6 +1151,44 @@ class RestockCore:
             self.ph['ref'] = (gap, pose[0], pose[1])
         self.ph['det_t'] = t_det
         return gap, bearing, sg, f'{src}/{how}'
+
+    def _pick_detection(self, since, cam, pose):
+        """(source, time, detection) of the box we are after, or None.
+
+        A frame can hold several boxes, and the near model's own pick (the biggest) is
+        not always ours: every box of the newest frame (the model's 'all' list) is put
+        on the map and the one nearest the tracked box wins, if within servo_match_m.
+        Near model first, the far one when the near one has none of ours."""
+        box = self.box
+        for src, stream in (('near', 'box_target'), ('far', 'box_far')):
+            msgs = [(t, d) for t, d in self.p.messages(stream, since)
+                    if d.get('found') or d.get('all')]
+            if not msgs:
+                continue
+            t, d = msgs[-1]
+            frame = d.get('frame') or [2 * cam.cx, 2 * cam.cy]
+            cands = []
+            if d.get('found') and d.get('box'):
+                cands.append(d)
+            for b in d.get('all') or []:
+                b = [float(v) for v in b[:4]]
+                if any(max(abs(b[i] - float(c['box'][i])) for i in range(4)) < 4.0
+                       for c in cands):
+                    continue                          # the model's own pick again
+                cands.append({'box': b, 'frame': frame,
+                              'touches': {'top': b[1] <= 2, 'bottom': b[3] >= frame[1] - 2,
+                                          'left': b[0] <= 2, 'right': b[2] >= frame[0] - 2}})
+            if box is None:
+                return (src, t, cands[0]) if cands else None
+            best = None
+            for c in cands:
+                sg = G.locate_box(cam, pose, c['box'], self.spec)
+                err = math.hypot(sg.x - box.x, sg.y - box.y)
+                if best is None or err < best[0]:
+                    best = (err, c)
+            if best is not None and best[0] <= self.s.servo_match_m:
+                return src, t, best[1]
+        return None
 
     def _tick_SERVO(self, now):
         box, ph, st = self.box, self.ph, self.s
@@ -1344,11 +1381,13 @@ class RestockCore:
         """Sideways offset [m] of the box center from the robot's axis (+ = left), from
         the newest near detection (its image column), or None."""
         since = max(self.p.now() - 0.6, self.ph.get('settled', 0.0))
-        msgs = [d for t, d in self.p.messages('box_target', since) if d.get('found')]
         cam = self.p.camera()
-        if not msgs or cam is None:
+        if cam is None:
             return None
-        d = msgs[-1]
+        pick = self._pick_detection(since, cam, pose)
+        if pick is None:
+            return None
+        d = pick[2]
         forward = self.ph.get('face_x')
         if forward is None:
             forward = G.locate_box(cam, pose, d['box'], self.spec).distance

@@ -506,6 +506,10 @@ class ProgramManager(Node):
             topics.setdefault('cmd_vel', self.placeholders.get('cmd_vel_in', '/cmd_vel'))
             topics.setdefault('scan', self.placeholders.get('scan_raw', '/laser_scan'))
             ports['topics'] = topics
+            motion = dict(ports.get('motion', {}) or {})
+            if self.placeholders.get('turn_min_speed'):      # per mode (the sim base)
+                motion['turn_min_speed'] = float(self.placeholders['turn_min_speed'])
+            ports['motion'] = motion
             cfg['ports'] = ports
             self.restock_ports = RestockPorts(
                 self, cfg, self.log, lambda: self.mission_folder, self.slam_status,
