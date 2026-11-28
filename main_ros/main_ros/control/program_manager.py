@@ -507,8 +507,9 @@ class ProgramManager(Node):
             topics.setdefault('scan', self.placeholders.get('scan_raw', '/laser_scan'))
             ports['topics'] = topics
             motion = dict(ports.get('motion', {}) or {})
-            if self.placeholders.get('turn_min_speed'):      # per mode (the sim base)
-                motion['turn_min_speed'] = float(self.placeholders['turn_min_speed'])
+            for key in ('turn_min_speed', 'drive_min_speed'):  # per mode (the sim base)
+                if self.placeholders.get(key):
+                    motion[key] = float(self.placeholders[key])
             ports['motion'] = motion
             cfg['ports'] = ports
             self.restock_ports = RestockPorts(

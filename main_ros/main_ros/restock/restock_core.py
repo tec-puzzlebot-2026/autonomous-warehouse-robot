@@ -127,6 +127,15 @@ class RestockSettings:
     rack_square_max_deg: float = 15.0  # rack box: turn by the map's edge only if this close
     # A detection is our box if it lands this close to where we track it on the map.
     servo_match_m: float = 0.40
+    # The front face is the one with the QR code. At servo_front_gap the robot checks
+    # it is in front of that face (within front_tol_deg / front_tol_m); if not it moves
+    # there (turn - drive - turn), at most front_max_moves times. No code seen after
+    # front_look_s: the face in front of the robot is taken.
+    servo_front_gap: float = 0.45
+    front_tol_deg: float = 10.0
+    front_tol_m: float = 0.04
+    front_max_moves: int = 2
+    front_look_s: float = 3.0
     servo_handoff_margin: float = 0.25  # m: servo takes over at servo_start_gap + this
     servo_handoff_still_s: float = 4.0  # or when Sendero has not moved the robot this long
     servo_timeout_s: float = 90.0
@@ -181,7 +190,7 @@ class RestockSettings:
     # A navigation goal the robot does not move for this long is given up (retried
     # once): Sendero holding a goal without driving never blocks restocking. 0 = off.
     nav_stall_s: float = 25.0
-    min_far_conf: float = 0.90         # far detector confidence that starts a box task
+    min_far_conf: float = 0.80         # far detector confidence that starts a box task
     # With boxes_always_on: a box seen while driving to a viewpoint stops the patrol
     # there (the route resumes at that viewpoint after the box).
     watch_while_driving: bool = True
@@ -236,6 +245,7 @@ class Box:
     y: float
     level: int
     yaw: float = None              # outward normal of the pick face (map frame)
+    front_yaw: float = None        # outward normal of the face with the QR code (seen)
     company: str = None
     status: str = 'new'            # new, carried, delivered, failed, lost, unknown, no_dock
     data_missing: bool = False
@@ -1097,10 +1107,11 @@ class RestockCore:
         self._event(f'{self.box.id}: {why}: Sendero leg done, visual servo takes over')
         self._goto('SERVO')
 
-    def _enter_SERVO(self):
-        self._vision('box_target', 'box_far')
+    def _enter_SERVO(self, front_ok=False, moves=0):
+        self._vision('box_target', 'box_far', 'qr')
         self.ph.update(t0=self.p.now(), seen=self.p.now(), ref=None, poses=[],
-                       target_heading=None, det_used=None)
+                       target_heading=None, det_used=None, front_ok=front_ok, moves=moves,
+                       front_wait=None)
         self.detail = f'{self.box.id}: visual servo to the box'
 
     def _box_in_view(self, now):
@@ -1150,6 +1161,7 @@ class RestockCore:
         if how != 'odom':
             self.ph['ref'] = (gap, pose[0], pose[1])
         self.ph['det_t'] = t_det
+        self.ph['det_box'] = [float(v) for v in d['box'][:4]]
         return gap, bearing, sg, f'{src}/{how}'
 
     def _pick_detection(self, since, cam, pose):
@@ -1229,6 +1241,12 @@ class RestockCore:
             c = gap + st.robot_front_x + self.spec.depth / 2
             box.x = pose[0] + c * math.cos(pose[2] + bearing)
             box.y = pose[1] + c * math.sin(pose[2] + bearing)
+        self._watch_front(now, pose)
+        if not ph['front_ok'] and (gap <= st.servo_front_gap or (
+                guard is not None and guard <= st.servo_front_gap and abs(bearing) < 0.25)):
+            self.p.send_velocity(0.0, 0.0)
+            self._front_check(now, pose)
+            return
         stop_by = None
         if gap <= st.servo_stop_gap:
             stop_by = f'camera ({how})'
@@ -1247,6 +1265,97 @@ class RestockCore:
             v = max(st.servo_min_v, min(st.servo_max_v, 0.6 * (gap - st.servo_stop_gap)))
         self.p.send_velocity(v, w)
         self._servo_log(now, gap, bearing, how, v, w, guard)
+
+    # ── the front face: the one with the QR code ─────────────────────────
+    def _watch_front(self, now, pose):
+        """Every QR pattern (read or not) inside our box's outline gives the front
+        face's direction: the plane of the code's 4 corners."""
+        box, cam, bb = self.box, self.p.camera(), self.ph.get('det_box')
+        if cam is None or pose is None or bb is None:
+            return
+        msgs = [d for t, d in self.p.messages('qr', now - 0.6)]
+        if not msgs:
+            return
+        d = msgs[-1]
+        quads = d.get('located') or [c.get('corners') for c in d.get('codes', [])]
+        mx, my = 0.15 * (bb[2] - bb[0]), 0.15 * (bb[3] - bb[1])
+        for q in quads:
+            if not q or len(q) != 4:
+                continue
+            cu = sum(p[0] for p in q) / 4.0
+            cv = sum(p[1] for p in q) / 4.0
+            if not (bb[0] - mx <= cu <= bb[2] + mx and bb[1] - my <= cv <= bb[3] + my):
+                continue                              # another box's code
+            yaw = G.quad_normal_yaw(cam, q)
+            if yaw is None:
+                continue
+            seen = self.ph.setdefault('front_seen', [])
+            seen.append(wrap(pose[2] + yaw))
+            del seen[:-5]
+            c = sum(math.cos(a) for a in seen)
+            sn = sum(math.sin(a) for a in seen)
+            box.front_yaw = math.atan2(sn, c)
+            return
+
+    def _front_check(self, now, pose):
+        """Close to the box: is the robot in front of the face with the QR code? If not,
+        turn - drive - turn to in front of it (servo_front_gap away), then servo again."""
+        box, st, ph = self.box, self.s, self.ph
+        if box.front_yaw is None:
+            if ph['front_wait'] is None:
+                ph['front_wait'] = now
+                self._event(f'{box.id}: close to the box, looking for its QR code (the '
+                            f'front face)')
+            if now - ph['front_wait'] < st.front_look_s:
+                return
+            self._event(f'{box.id}: no QR code seen on this side: taking the face in front '
+                        f'of the robot')
+            ph['front_ok'] = True
+            return
+        n = box.front_yaw
+        reach = self.spec.depth / 2 + st.servo_front_gap + st.robot_front_x
+        px, py = box.x + reach * math.cos(n), box.y + reach * math.sin(n)
+        heading = wrap(n + math.pi)
+        err = wrap(pose[2] - heading)
+        # sideways distance of the robot from the face's center line
+        off = -(pose[0] - box.x) * math.sin(n) + (pose[1] - box.y) * math.cos(n)
+        if abs(err) <= math.radians(st.front_tol_deg) and abs(off) <= st.front_tol_m:
+            self._event(f'{box.id}: in front of the QR face ({math.degrees(err):+.0f} deg, '
+                        f'{100 * off:+.0f} cm off its center line)')
+            ph['front_ok'] = True
+            return
+        if ph['moves'] >= st.front_max_moves:
+            self._event(f'{box.id}: still {math.degrees(err):+.0f} deg / {100 * off:+.0f} cm '
+                        f'off the QR face after {ph["moves"]} moves: going on from here')
+            ph['front_ok'] = True
+            return
+        self._event(f'{box.id}: the QR face is {math.degrees(err):+.0f} deg / '
+                    f'{100 * off:+.0f} cm off: moving in front of it')
+        moves = ph['moves'] + 1
+        self._move_to(pose, px, py, heading, lambda: self._goto('SERVO', moves=moves),
+                      'front face')
+
+    def _move_to(self, pose, px, py, heading, ok, what):
+        """Turn - drive - turn by odometry to (px, py) facing `heading` (map)."""
+        t = self.s.drive_timeout_s
+        fail = lambda r: self._box_end('failed', r)      # noqa: E731
+        dx, dy = px - pose[0], py - pose[1]
+        run = math.hypot(dx, dy)
+        to_p = wrap(math.atan2(dy, dx) - pose[2]) if run > 0.02 else 0.0
+        if abs(to_p) > math.pi / 2:                     # behind: back up to it instead
+            to_p, run = wrap(to_p + math.pi), -run
+        self.p.send_velocity(0.0, 0.0)
+
+        def turn_to_face():
+            self._await(self.p.rotate(wrap(heading - pose[2] - to_p)), t, ok, fail,
+                        f'{what}: face the box')
+
+        def drive():
+            if abs(run) <= 0.02:
+                turn_to_face()
+                return
+            self._await(self.p.drive_straight(run), t, turn_to_face, fail, f'{what}: drive')
+        self._await(self.p.rotate(to_p), t, drive, fail, f'{what}: turn')
 
     def _heading_at(self, t, pose_now):
         """Robot heading at time t (the pose history the servo keeps), else now."""
@@ -1297,6 +1406,8 @@ class RestockCore:
             return
         if fit is not None:
             dist, yaw_err = fit
+        elif box.front_yaw is not None:
+            dist, yaw_err = None, wrap(box.front_yaw + math.pi - pose[2])
         elif box.level > 0 and box.yaw is not None:
             dist, yaw_err = None, wrap(box.yaw + math.pi - pose[2])
         else:
@@ -1304,8 +1415,8 @@ class RestockCore:
         if fit is None and abs(yaw_err) > math.radians(self.s.rack_square_max_deg):
             # rack box: the map's edge direction this far off is not believed (the
             # servo already looks straight at the box); keep the heading
-            self._event(f'{box.id}: rack edge on the map {math.degrees(yaw_err):+.0f} deg '
-                        f'off the robot: not used, keeping the heading')
+            self._event(f'{box.id}: face direction {math.degrees(yaw_err):+.0f} deg off the '
+                        f'robot: not believed this close, keeping the heading')
             yaw_err = 0.0
         if fit is not None and abs(yaw_err) > math.radians(self.s.realign_deg) and \
                 tries < self.s.square_tries:

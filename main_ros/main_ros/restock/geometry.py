@@ -147,6 +147,36 @@ def locate_box(cam, robot_pose, image_box, spec=BoxSpec()):
     return BoxSighting(cx, cy, bottom_z, level, dist, bearing)
 
 
+def quad_normal_yaw(cam, corners):
+    """Yaw [rad, base_link] of the outward normal (toward the camera) of a flat square
+    seen as the 4 image corners `corners` (a QR code on a box face), or None.
+
+    A square's pose from its 4 corners (OpenCV IPPE) gives its plane whatever its size;
+    the size only scales the distance, which is not used here.
+    """
+    import cv2
+    pts = np.asarray(corners, dtype=np.float64).reshape(-1, 2)
+    if pts.shape[0] != 4:
+        return None
+    s = 0.05
+    obj = np.array([[-s, s, 0.0], [s, s, 0.0], [s, -s, 0.0], [-s, -s, 0.0]])
+    K = np.array([[cam.fx, 0.0, cam.cx], [0.0, cam.fy, cam.cy], [0.0, 0.0, 1.0]])
+    try:
+        ok, rvec, tvec = cv2.solvePnP(obj, pts, K, None, flags=cv2.SOLVEPNP_IPPE)
+    except cv2.error:
+        return None
+    if not ok:
+        return None
+    R, _ = cv2.Rodrigues(rvec)
+    n = R[:, 2]
+    if float(n @ tvec.ravel()) > 0.0:          # make it point back at the camera
+        n = -n
+    nb = cam.T[:3, :3] @ n
+    if math.hypot(nb[0], nb[1]) < 0.3:         # a face seen from above: no yaw
+        return None
+    return math.atan2(nb[1], nb[0])
+
+
 def point_at_height(cam, u, v, z_floor):
     """base_link (x, y) where the ray of pixel (u, v) is z_floor above the floor, or
     None (the ray never gets there in front of the camera). With a box's bottom edge

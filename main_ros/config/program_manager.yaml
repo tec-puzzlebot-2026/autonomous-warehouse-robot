@@ -38,6 +38,8 @@ modes:
       # The sim forklift does not turn in place below ~0.8 rad/s (0.8 jerky, 1.0 smooth):
       # restocking's own turns start at this (restock.yaml turn_min_speed otherwise).
       turn_min_speed: 1.0
+      # ... and does not drive below ~0.05 m/s (it stood still at 0.04).
+      drive_min_speed: 0.06
       # The forklift PuzzleBot (simulation/assets/forklift/puzzlebot_forklift.usdc):
       # wheels 0.05 m, 0.17 m apart (the drive graph's Differential Controller too).
       odom_args: "-p wheel_radius:=0.05 -p wheel_separation:=0.17"

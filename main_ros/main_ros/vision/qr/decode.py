@@ -71,3 +71,25 @@ def decode_qr(frame, detector, upscale=1.0, known=(), companies=None, contrast_r
         out.append({'text': text, 'raw': raw,
                     'corners': [[round(u, 1), round(v, 1)] for u, v in corners]})
     return out
+
+
+def locate_qr(frame, detector):
+    """Corners [[u, v] x 4] of every QR pattern in a BGR frame, decoded or not (a code
+    seen at a slant may not decode but is still found): where the front face is."""
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
+    try:
+        ok, points = detector.detectMulti(gray)
+    except cv2.error:
+        ok, points = False, None
+    if not ok or points is None:
+        try:
+            ok, pts = detector.detect(gray)
+        except cv2.error:
+            ok, pts = False, None
+        points = [pts] if ok and pts is not None else []
+    out = []
+    for pts in points:
+        pts = np.asarray(pts, np.float32).reshape(-1, 2)
+        if pts.shape[0] == 4:
+            out.append([[round(float(u), 1), round(float(v), 1)] for u, v in pts])
+    return out

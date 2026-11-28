@@ -86,3 +86,21 @@ def test_face_center_offset_whole_and_cut_by_the_image_edge():
         assert abs(left_cut - lat) < 0.005, (lat, left_cut)
         right_cut = G.face_center_offset(cam, [ua, y1, 640, y2], 0.40, frame_w=640)
         assert abs(right_cut - lat) < 0.005, (lat, right_cut)
+
+
+def test_quad_normal_yaw_from_a_qr_codes_corners():
+    cam = G.Camera(528.4, 528.4, 320.0, 240.0, (0.0939, 0.0, 0.235, 0.0, 0.3054, 0.0))
+    Tinv = np.linalg.inv(cam.T)
+    for deg in (180.0, 150.0, -140.0, 120.0):
+        yaw = math.radians(deg)                  # outward normal (180 = facing the robot)
+        n = np.array([math.cos(yaw), math.sin(yaw), 0.0])
+        t = np.array([-n[1], n[0], 0.0])
+        c = np.array([0.6, 0.05, 0.20])
+        pts = []
+        for a, b in ((-1, 1), (1, 1), (1, -1), (-1, -1)):
+            q = Tinv @ np.append(c + 0.03 * a * t + 0.03 * b * np.array([0, 0, 1.0]), 1.0)
+            pts.append([cam.cx + cam.fx * q[0] / q[2], cam.cy + cam.fy * q[1] / q[2]])
+        got = G.quad_normal_yaw(cam, pts)
+        err = (got - yaw + math.pi) % (2 * math.pi) - math.pi
+        assert abs(err) < math.radians(1.0), (deg, math.degrees(got))
+    assert G.quad_normal_yaw(cam, [[0, 0], [1, 1]]) is None

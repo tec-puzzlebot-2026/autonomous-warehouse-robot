@@ -253,6 +253,33 @@ class SimPorts:
             return None
         return [max(min(us), 0), max(min(vs), 0), min(max(us), 640), min(max(vs), 480)]
 
+    def _qr_quad(self, b, side=0.06):
+        """Image corners of b's QR code (a square on its qr face) if that face is turned
+        toward the camera (found, maybe not read), else None."""
+        foot = G.BoxFootprint(b.x, b.y, b.yaw, self.spec)
+        face = next((f for f in foot.faces() if f[0] == b.qr_face), None)
+        if face is None or b.state == 'carried':
+            return None
+        name, (fx, fy), normal = face
+        view = math.atan2(self.pose[1] - fy, self.pose[0] - fx)
+        if abs(wrap(view - normal)) > math.radians(70):
+            return None
+        tx, ty = -math.sin(normal), math.cos(normal)
+        zc = self.spec.level_heights[b.level] + self.spec.height / 2 - self.cam.base_height
+        out = []
+        for a, h in ((-1, 1), (1, 1), (1, -1), (-1, -1)):
+            pw = (fx + 0.001 * math.cos(normal) + a * side / 2 * tx,
+                  fy + 0.001 * math.sin(normal) + a * side / 2 * ty)
+            pb = G.relative(tuple(self.pose), (pw[0], pw[1], 0.0))
+            po = self.Tinv @ np.array([pb[0], pb[1], zc + h * side / 2, 1.0])
+            if po[2] <= 0.05:
+                return None
+            out.append([self.cam.cx + self.cam.fx * po[0] / po[2],
+                        self.cam.cy + self.cam.fy * po[1] / po[2]])
+        if any(not (0 <= u <= 640 and 0 <= v <= 480) for u, v in out):
+            return None
+        return out
+
     def _visible(self, max_range):
         out = []
         for b in self.boxes:
@@ -294,7 +321,8 @@ class SimPorts:
                     w, h = 0.25 * (bb[2] - bb[0]), 0.25 * (bb[3] - bb[1])
                     codes.append({'text': b.company, 'corners': [[cu - w, cv - h], [cu + w, cv - h],
                                                                  [cu + w, cv + h], [cu - w, cv + h]]})
-            return [(t, {'stamp': t, 'codes': codes}) for t in stamps]
+            located = [q for q in (self._qr_quad(v[1]) for v in self._visible(1.5)) if q]
+            return [(t, {'stamp': t, 'codes': codes, 'located': located}) for t in stamps]
         if stream == 'logos':
             for c, d in self.world_docks.items():
                 if math.hypot(d.entrance[0] - self.pose[0], d.entrance[1] - self.pose[1]) < 0.1:
@@ -538,6 +566,19 @@ def test_vision_servo_keeps_its_box_when_the_near_model_picks_another(tmp_path):
     assert math.hypot(sg.x - ours.x, sg.y - ours.y) < 0.1, (sg.x, sg.y)
     core.box = rc.Box('box_02', 3.0, 0.5, 0)               # nothing of ours in view
     assert core._pick_detection(ports.t - 0.6, cam, tuple(ports.pose)) is None
+
+
+def test_vision_servo_moves_in_front_of_the_qr_face(tmp_path):
+    """Approached at a slant: the QR code's corners show where the front face looks, the
+    robot moves in front of it and picks the box square to that face."""
+    box = box_on_rack('soriene')
+    core, ports = make_core(tmp_path, [box], settings=rc.RestockSettings(**VISION))
+    run(core, ports, stop_when=lambda: core.phase == 'READ_QR')
+    assert any('moving in front of it' in t for t in ports.logs), ports.logs[-12:]
+    assert any('in front of the QR face' in t for t in ports.logs)
+    assert abs(wrap(ports.pose[2] - (box.yaw + math.pi))) < math.radians(4)
+    run_on(core, ports)
+    assert core.done and box.state == 'dock' and core.per_company()['soriene'] == 1
 
 
 def test_vision_approach_ends_lost_when_the_box_leaves_the_image(tmp_path):

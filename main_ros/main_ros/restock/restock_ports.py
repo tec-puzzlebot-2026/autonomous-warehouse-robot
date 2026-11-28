@@ -190,6 +190,8 @@ class RestockPorts:
         # Turning in place needs a minimum speed to break away (the sim forklift does
         # not turn at all at 0.4 rad/s). It starts at turn_min_speed and rises by
         # turn_min_step whenever a commanded turn does not move the heading for 1 s.
+        # The same for driving: slower than this does not move the base (sim: ~0.05 m/s).
+        self.v_floor = float(mc.get('drive_min_speed', 0.03))
         self.break_away = BreakAway(float(mc.get('turn_min_speed', 0.5)),
                                     float(mc.get('turn_min_max', 1.2)),
                                     float(mc.get('turn_min_step', 0.15)), log=log)
@@ -379,7 +381,10 @@ class RestockPorts:
             self.job.cancel()
             self.job = None
         cmd = Twist()
-        cmd.linear.x, cmd.angular.z = float(v), self._turn_cmd(v, w)
+        v = float(v)
+        if 1e-6 < abs(v) < self.v_floor:
+            v = math.copysign(self.v_floor, v)
+        cmd.linear.x, cmd.angular.z = v, self._turn_cmd(v, w)
         self.cmd_pub.publish(cmd)
 
     def _turn_cmd(self, v, w):
@@ -423,7 +428,8 @@ class RestockPorts:
                 self.cmd_pub.publish(Twist())
                 self.job = None
                 return
-            v = math.copysign(min(job.speed, max(0.02, 1.5 * abs(left))), left)
+            v = math.copysign(min(max(job.speed, self.v_floor),
+                                  max(self.v_floor, 1.5 * abs(left))), left)
             w = 2.0 * G.wrap(sth - th)                       # hold the heading
             if job.centered and job.amount > 0:
                 w += self._centering()

@@ -13,7 +13,10 @@ Subscribes  image_topic (default /camera/image_raw)
             ~/enable (std_msgs/Bool): switch decoding on/off
 Publishes   ~/codes (std_msgs/String, JSON):
               {"stamp": 12.3, "frame": [640, 480],
-               "codes": [{"text": "walnut", "raw": "WALNUT-02", "corners": [[u, v] x 4]}]}
+               "codes": [{"text": "walnut", "raw": "WALNUT-02", "corners": [[u, v] x 4]}],
+               "located": [[[u, v] x 4], ...]}
+            located: every QR pattern found, decoded or not (at a slant a code is often
+            found but not read): it shows which face of a box is the front.
             An empty "codes" list when nothing was decoded (the state machine then
             knows the image was looked at).
 
@@ -37,7 +40,7 @@ from sensor_msgs.msg import Image
 from std_msgs.msg import Bool, String
 
 from main_ros.vision.boxes.box_target_node import image_to_bgr
-from main_ros.vision.qr.decode import decode_qr, load_companies
+from main_ros.vision.qr.decode import decode_qr, load_companies, locate_qr
 
 
 class QrReaderNode(Node):
@@ -87,9 +90,11 @@ class QrReaderNode(Node):
             self.get_logger().error(str(e), throttle_duration_sec=5.0)
             return
         codes = decode_qr(frame, self.detector, self.upscale, self.known, self.companies)
+        located = [c['corners'] for c in codes] or locate_qr(frame, self.detector)
         stamp = msg.header.stamp.sec + 1e-9 * msg.header.stamp.nanosec
         self.pub.publish(String(data=json.dumps({
-            'stamp': stamp, 'frame': [int(frame.shape[1]), int(frame.shape[0])], 'codes': codes})))
+            'stamp': stamp, 'frame': [int(frame.shape[1]), int(frame.shape[0])], 'codes': codes,
+            'located': located})))
 
 
 def main(args=None):

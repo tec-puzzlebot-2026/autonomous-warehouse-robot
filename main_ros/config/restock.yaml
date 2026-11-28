@@ -69,6 +69,16 @@ restock:
   rack_square_max_deg: 15.0  # rack box: turn by the map's edge only if within this
   servo_match_m: 0.40        # m, with several boxes in the image: ours is the one this
                              # close to where we track it (not the biggest one)
+  # The front face is the one with the QR code (found by the QR reader even when it
+  # cannot read it at a slant; the code's 4 corners give the face's direction). At
+  # servo_front_gap the robot checks it is in front of that face, else it moves there
+  # (turn - drive - turn), then servos straight in. No code seen in front_look_s:
+  # the face in front of the robot is taken.
+  servo_front_gap: 0.45      # m, fork tips -> face
+  front_tol_deg: 10.0
+  front_tol_m: 0.04
+  front_max_moves: 2
+  front_look_s: 3.0          # s
   servo_handoff_margin: 0.25 # m, the servo takes over from Sendero once the camera has
                              # the box within servo_start_gap + this
   servo_handoff_still_s: 4.0 # s, or once Sendero has left the robot standing this long
@@ -119,7 +129,7 @@ restock:
                              # the box to the other faces when the front has none
   no_qr_company: walnut      # a box whose QR is not read is still picked and taken here
                              # ('' = leave it in the drop zone as "data missing")
-  min_far_conf: 0.90         # far detector confidence that starts a box task (the far
+  min_far_conf: 0.80         # far detector confidence that starts a box task (the far
                              # model itself reports from 0.40, shown in the overlay)
   watch_while_driving: true  # a box seen while driving to a viewpoint stops the patrol
                              # there; after the box, the route goes on from that viewpoint
@@ -197,6 +207,7 @@ ports:
     # at 0.4 rad/s): turns get at least turn_min_speed, raised by turn_min_step (up to
     # turn_min_max) whenever a commanded turn leaves the heading still for 1 s.
     turn_min_speed: 0.5             # rad/s
+    drive_min_speed: 0.03           # m/s, straight drives never slower (the base stalls)
     turn_min_step: 0.15
     turn_min_max: 1.2
     center_gain: 1.5                # inside a trailer: keep centered between the side walls
