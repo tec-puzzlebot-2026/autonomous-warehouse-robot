@@ -49,6 +49,9 @@ restock:
   # ── robot and box geometry ────────────────────────────────────────────────
   # Gaps are measured from the robot's FRONT to the box face.
   robot_front_x: 0.18        # m, base_link (wheel axle) -> fork tips (pick_sim.json fork_reach_m)
+  approach_gap: 0.45         # m, where the robot drives to in front of a box (fork tips ->
+                             # face): out of the box's inflated costmap, so Sendero does
+                             # not move the goal and creep; the Align action takes over
   inspect_gap: 0.25          # m, while reading a face (the whole face in the image)
   align_gap: 0.20            # m, aligned pose: camera and LiDAR still see the face
   ready_gap: 0.10            # m, fork tips -> box face when PickBox starts: the axle is then

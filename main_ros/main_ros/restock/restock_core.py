@@ -91,6 +91,10 @@ class RestockSettings:
     # Robot geometry and the distances in front of a box (gaps from the robot's front).
     robot_front_x: float = 0.12        # m, base_link -> front of the robot (MEASURE)
     inspect_gap: float = 0.25          # m, gap while looking at a face (whole face in view)
+    # Gap of the APPROACH (a Sendero goal): far enough from the box that the goal is out
+    # of the box's inflated costmap (Sendero would move the goal and creep). From there
+    # the Align action (made for close quarters) brings the robot square to the face.
+    approach_gap: float = 0.45
     # QR only on the face the robot meets (true: drive round the box to the other faces).
     inspect_other_faces: bool = False
     # Company for a box whose QR is not read: it is picked and delivered there anyway
@@ -966,7 +970,7 @@ class RestockCore:
     def _enter_APPROACH(self, again=False):
         box = self.box
         self._vision()
-        pose = self._approach_pose(box, self.s.inspect_gap)
+        pose = self._approach_pose(box, self.s.approach_gap)
         if pose is None:
             self._box_end('failed', 'no reachable pose in front of the box')
             return
@@ -1102,7 +1106,9 @@ class RestockCore:
             self._event(f'{box.id}: no QR code on {len(ins["tried"])}/{ins["reachable"]} '
                         'faces: "data missing", it is read again in the free area')
         self.ph['align_tries'] = 0
-        self._goto('ALIGN', tries=0)
+        # Read from the pick face's side (always, with inspect_other_faces false): the
+        # Align action squares the robot up from here, no navigation goal near the box.
+        self._goto('ALIGN', tries=0, near=ins['tried'][-1] == 'front')
 
     # =====================================================================
     # BOX TASK: align, close in, pick
@@ -1125,8 +1131,7 @@ class RestockCore:
                 or abs(wrap(goal[2] - here[2])) > math.radians(35)):
             # Away from the pick face (e.g. after reading the back): drive there first.
             self.detail = f'{box.id}: back to the pick face'
-            pose = (goal if self.world.reachable(goal)
-                    else self._approach_pose(box, self.s.align_gap))
+            pose = self._approach_pose(box, self.s.approach_gap)
             if pose is None:
                 self._box_end('failed', 'the pick face cannot be reached')
                 return
@@ -1142,7 +1147,7 @@ class RestockCore:
     def _align_failed(self, reason, tries):
         if tries + 1 < self.s.align_tries:
             self._event(f'{reason}; approaching again')
-            pose = self._approach_pose(self.box, self.s.align_gap)
+            pose = self._approach_pose(self.box, self.s.approach_gap)
             if pose is None:
                 self._box_end('failed', reason)
                 return
