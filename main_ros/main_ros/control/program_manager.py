@@ -218,8 +218,8 @@ class ProgramManager(Node):
         self._mlog = open(os.path.join(self.log_dir, 'manager.txt'), 'a', buffering=1)
         if self.start_folder:
             self._log_line(f'map:={map_arg} -> {self.start_folder}'
-                     + (f', start_pose {start_pose}' if start_pose else '')
-                     + (', restock_only' if restock_only else ''))
+                           + (f', start_pose {start_pose}' if start_pose else '')
+                           + (', restock_only' if restock_only else ''))
 
         self.steps = self._load_steps()
         self.sup = ProcessSupervisor(self.log_dir, logger=self._log_line)
@@ -244,6 +244,10 @@ class ProgramManager(Node):
             self.create_subscription(
                 String, topics[key], lambda m, k=key: self._on_report(k, m), 10)
         self.create_subscription(String, topics['command'], self._on_command, 10)
+        # Sendero's decisions (planned, blocked, recovery, aborted ...) in manager.txt only,
+        # so a navigation problem can be read afterwards without a second terminal.
+        self.create_subscription(String, topics.get('navigation_events', '/navigation/events'),
+                                 self._on_nav_event, 50)
         self.create_subscription(String, topics['map_save_request'],
                                  lambda m: self.core.on_map_save_request(), 10)
         self.create_subscription(String, topics.get('landmarks', '/landmark_mapper/landmarks'),
@@ -658,6 +662,13 @@ class ProgramManager(Node):
     # =====================================================================
     # callbacks
     # =====================================================================
+    def _on_nav_event(self, msg):
+        line = f'[{time.strftime("%H:%M:%S")}] [sendero event] {msg.data[:400]}'
+        try:
+            self._mlog.write(line + '\n')
+        except ValueError:
+            pass
+
     def _on_report(self, key, msg):
         self.reports[key] = (msg.data, time.monotonic())
 

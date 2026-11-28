@@ -101,6 +101,7 @@ topics:
   navigation_control: /navigation/control    # Sendero
   navigation_status: /navigation/status
   navigation_stats: /navigation/stats
+  navigation_events: /navigation/events      # written to manager.txt (not on screen)
   slam_status: /slam/status                  # SLAM v2
   landmarks: /landmark_mapper/landmarks      # markers + logos found (saved after mapping)
   restock_status: /restock/status            # out: Phase 2 status (JSON)
