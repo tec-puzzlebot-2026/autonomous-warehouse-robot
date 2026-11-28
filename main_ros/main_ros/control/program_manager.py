@@ -217,7 +217,7 @@ class ProgramManager(Node):
         self.placeholders['log_dir'] = self.log_dir
         self._mlog = open(os.path.join(self.log_dir, 'manager.txt'), 'a', buffering=1)
         if self.start_folder:
-            self.log(f'map:={map_arg} -> {self.start_folder}'
+            self._log_line(f'map:={map_arg} -> {self.start_folder}'
                      + (f', start_pose {start_pose}' if start_pose else '')
                      + (', restock_only' if restock_only else ''))
 
