@@ -450,6 +450,28 @@ def test_vision_approach_without_qr_goes_to_walnut(tmp_path):
     assert ports.world_docks['walnut'].contains(box.x, box.y)
 
 
+def test_vision_servo_takes_over_when_the_sendero_leg_never_ends(tmp_path):
+    """Sendero gets the robot to the box but never reports the goal done (it hangs in
+    its final turn): the servo takes over instead of waiting for ever."""
+    box = box_against_left_wall('emezon')
+    core, ports = make_core(tmp_path, [box], settings=rc.RestockSettings(
+        **dict(VISION, servo_start_gap=0.3)))
+    plain = ports.navigate
+
+    def navigate(pose, profile):
+        if core.phase == 'APPROACH':
+            ports.calls.append(('nav', tuple(round(v, 2) for v in pose), profile))
+            ports.pose = list(pose)                    # there, but never "succeeded"
+            return Handle(ports, 1e9)
+        return plain(pose, profile)
+    ports.navigate = navigate
+    run(core, ports, stop_when=lambda: core.phase == 'SERVO')
+    assert core.phase == 'SERVO', ports.logs[-10:]
+    assert any('visual servo takes over' in t for t in ports.logs), ports.logs[-10:]
+    run_on(core, ports)
+    assert core.done and box.state == 'dock', ports.logs[-15:]
+
+
 def test_vision_approach_ends_lost_when_the_box_leaves_the_image(tmp_path):
     box = box_against_left_wall('emezon')
     core, ports = make_core(tmp_path, [box], settings=rc.RestockSettings(**VISION))

@@ -118,6 +118,8 @@ class RestockSettings:
     servo_max_w: float = 0.5           # rad/s
     servo_k_bearing: float = 1.5       # rad/s per rad of bearing to the box
     servo_lost_s: float = 3.0          # s without the box in the image: lost
+    servo_handoff_margin: float = 0.25  # m: servo takes over at servo_start_gap + this
+    servo_handoff_still_s: float = 4.0  # or when Sendero has not moved the robot this long
     servo_timeout_s: float = 90.0
     square_tol_deg: float = 3.0        # face this parallel (LiDAR RANSAC) before reading
     square_tries: int = 3
@@ -412,6 +414,9 @@ class RestockCore:
             self._poll_wait(now)
             if self.phase == 'PATROL_GO' and self.wait is not None:
                 self._watch_far_box(now)
+            elif self.phase == 'APPROACH' and self.wait is not None and \
+                    str(self.s.approach_mode).lower() == 'vision':
+                self._watch_servo_handoff(now)
         else:
             handler = getattr(self, '_tick_' + self.phase, None)
             if handler is not None:
@@ -1038,8 +1043,50 @@ class RestockCore:
             self._box_end('failed', 'no reachable pose in front of the box')
             return
         self.detail = f'{box.id}: driving near the box (Sendero), then vision'
+        self.ph.update(still_pose=None, still_since=None)
+
+        def nav_failed(reason):
+            if self._box_in_view(self.p.now()) is not None:
+                self._event(f'{box.id}: Sendero stopped short ({reason}) but the box is in '
+                            f'view: visual servo from here')
+                self._goto('SERVO')
+            else:
+                self._box_end('failed', reason)
         self._nav(target, self.s.profile_patrol, lambda: self._goto('SERVO'),
-                  lambda r: self._box_end('failed', r), f'{box.id} approach')
+                  nav_failed, f'{box.id} approach')
+
+    def _watch_servo_handoff(self, now):
+        """While Sendero drives toward the box: hand over to the visual servo as soon as
+        the camera has the box close enough, or when the robot has stood still with the
+        box in view (Sendero turning in place or hanging at its goal never ends the leg)."""
+        seen = self._box_in_view(now)
+        pose = self.p.slam_pose()
+        if pose is None:
+            return
+        ph = self.ph
+        sp = ph.get('still_pose')
+        if sp is None or math.hypot(pose[0] - sp[0], pose[1] - sp[1]) > 0.02 or \
+                abs(wrap(pose[2] - sp[2])) > 0.05:
+            ph['still_pose'], ph['still_since'] = pose, now
+        still = now - ph['still_since'] >= self.s.servo_handoff_still_s
+        if seen is None:
+            return
+        gap = seen[0]
+        why = None
+        if gap <= self.s.servo_start_gap + self.s.servo_handoff_margin:
+            why = f'box {100 * gap:.0f} cm ahead'
+        elif still:
+            why = f'robot still for {self.s.servo_handoff_still_s:.0f} s with the box in view'
+        if why is None:
+            return
+        w, self.wait = self.wait, None
+        try:
+            w['h'].cancel()
+        except Exception:                      # noqa: BLE001
+            pass
+        self.p.cancel_motion()
+        self._event(f'{self.box.id}: {why}: Sendero leg done, visual servo takes over')
+        self._goto('SERVO')
 
     def _enter_SERVO(self):
         self._vision('box_target', 'box_far')

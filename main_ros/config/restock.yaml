@@ -61,6 +61,10 @@ restock:
   servo_max_w: 0.5           # rad/s
   servo_k_bearing: 1.5       # rad/s per rad of bearing
   servo_lost_s: 3.0          # s without the box in the image: lost
+  servo_handoff_margin: 0.25 # m, the servo takes over from Sendero once the camera has
+                             # the box within servo_start_gap + this
+  servo_handoff_still_s: 4.0 # s, or once Sendero has left the robot standing this long
+                             # with the box in view (it does not wait for Sendero to end)
   servo_timeout_s: 90.0
   square_tol_deg: 3.0        # parallel to the face within this
   square_tries: 3
