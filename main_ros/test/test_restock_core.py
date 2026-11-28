@@ -326,8 +326,10 @@ def make_core(tmp_path, boxes, mission='full', settings=None, **kw):
     folder, docks = make_folder(tmp_path, drop_dock=kw.pop('drop_dock', None))
     ports = SimPorts(folder, boxes, **kw)
     ports.world_docks = docks
+    # the full QR search (all faces, floor fallback); the no-QR shortcut is tested below
     s = settings or rc.RestockSettings(look_settle_s=0.2, look_s=0.5, read_s=0.5,
-                                       acquire_s=0.4, logo_look_s=0.4, survey=False)
+                                       acquire_s=0.4, logo_look_s=0.4, survey=False,
+                                       inspect_other_faces=True, no_qr_company='')
     core = rc.RestockCore(ports, s, mission)
     return core, ports
 
@@ -594,3 +596,20 @@ def test_a_goal_sendero_holds_without_moving_is_given_up(tmp_path):
     assert core.done
     assert any('no progress' in line for line in ports.logs)
     assert any(b.status == 'failed' for b in core.boxes)
+
+
+
+def test_no_qr_on_the_front_face_goes_to_the_default_company(tmp_path):
+    """The default settings: only the face the robot meets is read; a box without a
+    readable QR there is picked anyway and delivered to no_qr_company (walnut)."""
+    b = box_against_left_wall('emezon', qr='back')        # its QR is on another face
+    s = rc.RestockSettings(look_settle_s=0.2, look_s=0.5, read_s=0.5, acquire_s=0.4,
+                           logo_look_s=0.4, survey=False)
+    assert s.inspect_other_faces is False and s.no_qr_company == 'walnut'
+    core, ports = make_core(tmp_path, [b], settings=s)
+    run(core, ports)
+    reg = core.boxes[0]
+    assert reg.company == 'walnut' and not reg.data_missing, reg
+    assert not any('face skipped' in line or 'going to the' in line for line in ports.logs)
+    assert any('no_qr_company' in line for line in ports.logs)
+    assert b.state == 'dock'

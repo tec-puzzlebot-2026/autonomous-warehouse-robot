@@ -81,6 +81,10 @@ restock:
   deliver_to: docks
   nav_stall_s: 25.0          # a goal the robot does not move for this long is given up
                              # (retried once, then the box / viewpoint is skipped)
+  inspect_other_faces: false # QR read only on the face the robot meets; true: drive round
+                             # the box to the other faces when the front has none
+  no_qr_company: walnut      # a box whose QR is not read is still picked and taken here
+                             # ('' = leave it in the drop zone as "data missing")
   min_far_conf: 0.90         # far detector confidence that starts a box task (the far
                              # model itself reports from 0.40, shown in the overlay)
   watch_while_driving: true  # a box seen while driving to a viewpoint stops the patrol

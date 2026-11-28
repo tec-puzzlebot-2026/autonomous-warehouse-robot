@@ -91,6 +91,11 @@ class RestockSettings:
     # Robot geometry and the distances in front of a box (gaps from the robot's front).
     robot_front_x: float = 0.12        # m, base_link -> front of the robot (MEASURE)
     inspect_gap: float = 0.25          # m, gap while looking at a face (whole face in view)
+    # QR only on the face the robot meets (true: drive round the box to the other faces).
+    inspect_other_faces: bool = False
+    # Company for a box whose QR is not read: it is picked and delivered there anyway
+    # ('' = the old way: "data missing", set down in the drop zone / free area).
+    no_qr_company: str = 'walnut'
     align_gap: float = 0.20            # m, gap of the aligned pose (camera + LiDAR see the face)
     ready_gap: float = 0.07            # m, gap handed to the forklift (PickBox)
     carry_gap: float = 0.02            # m, carried box: robot front -> box face
@@ -1021,6 +1026,8 @@ class RestockCore:
                                   max_off_axis=math.radians(self.s.max_off_axis_deg))
         here = self.p.slam_pose()
         others = [(n, p) for n, p in views if n != 'front' and p is not None]
+        if not self.s.inspect_other_faces:
+            others = []                        # only the face in front of the robot
         self.inspect = {'on_floor': on_floor, 'queue': G.order_viewpoints(here, others),
                         'tried': ['front'], 'reachable': 1 + len(others)}
         self._goto('INSPECT_READ', face='front')
@@ -1081,6 +1088,11 @@ class RestockCore:
     def _inspect_finished(self):
         box, ins = self.box, self.inspect
         self._vision()
+        fallback = str(self.s.no_qr_company or '').strip().lower()
+        if box.company is None and fallback in self.s.companies:
+            box.company = fallback
+            self._event(f'{box.id}: no QR code read on the {", ".join(ins["tried"])} face: '
+                        f'picked anyway, it goes to {fallback} (no_qr_company)')
         if box.company is None:
             if ins['on_floor']:
                 self._box_end('unknown', 'no QR code readable on the open floor: left in the '
