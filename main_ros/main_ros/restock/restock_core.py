@@ -1097,7 +1097,8 @@ class RestockCore:
 
     def _enter_SERVO(self):
         self._vision('box_target', 'box_far')
-        self.ph.update(t0=self.p.now(), seen=self.p.now(), ref=None)
+        self.ph.update(t0=self.p.now(), seen=self.p.now(), ref=None, poses=[],
+                       target_heading=None, det_used=None)
         self.detail = f'{self.box.id}: visual servo to the box'
 
     def _box_in_view(self, now):
@@ -1110,15 +1111,15 @@ class RestockCore:
         rack box close to the camera); its 12 cm height in pixels (whole box only);
         else the last measurement minus the odometry driven since."""
         src = 'near'
-        msgs = [d for t, d in self.p.messages('box_target', now - 0.6) if d.get('found')]
+        msgs = [(t, d) for t, d in self.p.messages('box_target', now - 0.6) if d.get('found')]
         if not msgs:            # still too far for the near model: steer by the far one
             src = 'far'
-            msgs = [d for t, d in self.p.messages('box_far', now - 0.6)
+            msgs = [(t, d) for t, d in self.p.messages('box_far', now - 0.6)
                     if d.get('found') and d.get('box')]
         cam, pose = self.p.camera(), self.p.slam_pose()
         if not msgs or cam is None or pose is None:
             return None
-        d = msgs[-1]
+        t_det, d = msgs[-1]
         x1, y1, x2, y2 = [float(v) for v in d['box'][:4]]
         fw, fh = (d.get('frame') or [2 * cam.cx, 2 * cam.cy])[:2]
         touch = d.get('touches') or {}
@@ -1149,6 +1150,7 @@ class RestockCore:
                 gap, how = fit[0] - self.s.robot_front_x, 'lidar'
         if how != 'odom':
             self.ph['ref'] = (gap, pose[0], pose[1])
+        self.ph['det_t'] = t_det
         return gap, bearing, sg, f'{src}/{how}'
 
     def _tick_SERVO(self, now):
@@ -1157,8 +1159,11 @@ class RestockCore:
             self.p.send_velocity(0.0, 0.0)
             self._box_end('failed', f'visual servo timed out ({st.servo_timeout_s:.0f} s)')
             return
-        seen = self._box_in_view(now)
         pose = self.p.slam_pose()
+        if pose is not None:
+            ph['poses'] = [(t, th) for t, th in ph.get('poses', []) if now - t < 5.0]
+            ph['poses'].append((now, pose[2]))
+        seen = self._box_in_view(now)
         ahead = self.p.scan_ahead(st.servo_guard_half_width)
         guard = None if ahead is None else ahead - st.robot_front_x
         if seen is None:
@@ -1176,6 +1181,13 @@ class RestockCore:
             return
         ph['seen'] = now
         gap, bearing, sg, how = seen
+        # The camera sees ~1 frame per sim second here: turn by odometry toward the
+        # heading the box had when its frame came in, between frames too.
+        if ph.get('det_used') != ph.get('det_t'):
+            ph['det_used'] = ph.get('det_t')
+            ph['target_heading'] = wrap(self._heading_at(ph['det_t'], pose) + bearing)
+        if pose is not None and ph.get('target_heading') is not None:
+            bearing = wrap(ph['target_heading'] - pose[2])
         if how.endswith(('bottom', 'height', 'lidar')):
             c = gap + st.robot_front_x + self.spec.depth / 2
             box.x = pose[0] + c * math.cos(pose[2] + bearing)
@@ -1199,9 +1211,18 @@ class RestockCore:
         self.p.send_velocity(v, w)
         self._servo_log(now, gap, bearing, how, v, w, guard)
 
+    def _heading_at(self, t, pose_now):
+        """Robot heading at time t (the pose history the servo keeps), else now."""
+        hist = self.ph.get('poses') or []
+        best = None
+        for tp, th in hist:
+            if tp <= t:
+                best = th
+        return pose_now[2] if best is None else best
+
     def _servo_w(self, bearing):
         st = self.s
-        if abs(bearing) < math.radians(1.0):
+        if abs(bearing) < math.radians(1.5):
             return 0.0
         w = st.servo_k_bearing * bearing
         w = math.copysign(max(abs(w), st.servo_min_w), w)

@@ -33,6 +33,7 @@ from sensor_msgs.msg import CameraInfo, LaserScan
 from std_msgs.msg import Bool, Empty, String
 
 from main_ros.restock import geometry as G
+from main_ros.restock.break_away import BreakAway
 from main_ros.restock.landmark_mapper_node import load_mount, yaw_of
 
 DEFAULT_TOPICS = {
@@ -186,6 +187,12 @@ class RestockPorts:
         mc = pc.get('motion', {}) or {}
         self.drive_speed = float(mc.get('drive_speed', 0.06))
         self.turn_speed = float(mc.get('turn_speed', 0.5))
+        # Turning in place needs a minimum speed to break away (the sim forklift does
+        # not turn at all at 0.4 rad/s). It starts at turn_min_speed and rises by
+        # turn_min_step whenever a commanded turn does not move the heading for 1 s.
+        self.break_away = BreakAway(float(mc.get('turn_min_speed', 0.5)),
+                                    float(mc.get('turn_min_max', 1.2)),
+                                    float(mc.get('turn_min_step', 0.15)), log=log)
         self.center_gain = float(mc.get('center_gain', 1.5))
         self.pose_max_age = float(pc.get('pose_max_age_s', 1.0))
         self.laser_mount = tuple(float(v) for v in pc.get('laser_mount', [0.0, 0.0, 0.0]))
@@ -372,8 +379,13 @@ class RestockPorts:
             self.job.cancel()
             self.job = None
         cmd = Twist()
-        cmd.linear.x, cmd.angular.z = float(v), float(w)
+        cmd.linear.x, cmd.angular.z = float(v), self._turn_cmd(v, w)
         self.cmd_pub.publish(cmd)
+
+    def _turn_cmd(self, v, w):
+        """Angular speed actually sent (a turn in place gets the break-away speed)."""
+        return self.break_away.command(v, w, None if self.odom is None else self.odom[2],
+                                       self.clock())
 
     def drive_straight(self, distance, centered=False):
         return self._start_job('drive', distance, centered)
@@ -425,7 +437,8 @@ class RestockPorts:
                 self.cmd_pub.publish(Twist())
                 self.job = None
                 return
-            cmd.angular.z = math.copysign(min(job.speed, max(0.15, 1.5 * abs(left))), left)
+            w = math.copysign(min(job.speed, max(0.15, 1.5 * abs(left))), left)
+            cmd.angular.z = self._turn_cmd(0.0, w)
         self.cmd_pub.publish(cmd)
 
     def _centering(self):

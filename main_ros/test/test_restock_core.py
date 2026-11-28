@@ -770,3 +770,21 @@ def test_no_qr_on_the_front_face_goes_to_the_default_company(tmp_path):
     assert not any('face skipped' in line or 'going to the' in line for line in ports.logs)
     assert any('no_qr_company' in line for line in ports.logs)
     assert b.state == 'dock'
+
+
+def test_turn_in_place_learns_the_break_away_speed():
+    """A turn that does not move the heading gets a faster minimum, step by step."""
+    from main_ros.restock.break_away import BreakAway
+    logs = []
+    ba = BreakAway(floor=0.5, max_floor=1.2, step=0.15, log=logs.append)
+    assert ba.command(0.0, 0.3, 0.0, 0.0) == 0.5          # never below the floor
+    assert ba.command(0.05, 0.3, 0.0, 0.1) == 0.3         # driving: no floor
+    t = 0.2
+    for _ in range(30):                                   # 3 s, heading stuck
+        t += 0.1
+        ba.command(0.0, 0.3, 0.0, t)
+    assert ba.floor > 0.5 and logs
+    floor = ba.floor
+    ba.command(0.0, -0.3, 0.0, t + 0.1)
+    assert ba.command(0.0, -0.3, 0.2, t + 0.2) == -floor   # it turns: floor kept
+    assert ba.floor == floor

@@ -191,6 +191,12 @@ ports:
   motion:                           # our own straight drives and turns (odometry)
     drive_speed: 0.06               # m/s
     turn_speed: 0.5                 # rad/s
+    # Turning in place needs a break-away speed (the sim forklift does not turn at all
+    # at 0.4 rad/s): turns get at least turn_min_speed, raised by turn_min_step (up to
+    # turn_min_max) whenever a commanded turn leaves the heading still for 1 s.
+    turn_min_speed: 0.5             # rad/s
+    turn_min_step: 0.15
+    turn_min_max: 1.2
     center_gain: 1.5                # inside a trailer: keep centered between the side walls
   topics:                           # defaults in restock_ports.py; cmd_vel and scan come
     slam_pose: /slam/pose           # from program_manager.yaml (cmd_vel_in, scan_raw)
