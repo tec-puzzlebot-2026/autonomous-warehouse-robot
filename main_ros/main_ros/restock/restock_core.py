@@ -118,6 +118,13 @@ class RestockSettings:
     servo_max_w: float = 0.5           # rad/s
     servo_k_bearing: float = 1.5       # rad/s per rad of bearing to the box
     servo_lost_s: float = 3.0          # s without the box in the image: lost
+    servo_min_v: float = 0.04          # m/s, slower does not move the base (friction)
+    servo_min_w: float = 0.20          # rad/s, the same for turning
+    # LiDAR corridor ahead [m, half width]: anything in it at servo_stop_gap stops the
+    # servo (the box face, or a rack edge in front of it)
+    servo_guard_half_width: float = 0.10
+    servo_log_s: float = 1.0           # s between servo lines in the log
+    rack_square_max_deg: float = 15.0  # rack box: turn by the map's edge only if this close
     servo_handoff_margin: float = 0.25  # m: servo takes over at servo_start_gap + this
     servo_handoff_still_s: float = 4.0  # or when Sendero has not moved the robot this long
     servo_timeout_s: float = 90.0
@@ -1094,65 +1101,122 @@ class RestockCore:
         self.detail = f'{self.box.id}: visual servo to the box'
 
     def _box_in_view(self, now):
-        """(gap, bearing, sighting) of the box from the newest near detection, or None.
-        gap: fork tips -> face (LiDAR when it sees the face, else the box's size in
-        the image); bearing: the box center seen from the robot [rad]."""
+        """(gap, bearing, sighting, how) of the box from the newest detection, or None.
+        gap: fork tips -> face [m]; bearing: the box seen from the robot [rad];
+        how: what gave the distance ('lidar', 'bottom', 'height' or 'odom').
+
+        Distance, best first: the LiDAR face fit (floor box up close); the box's bottom
+        edge in the image at its level's known height (works with the top cut off, a
+        rack box close to the camera); its 12 cm height in pixels (whole box only);
+        else the last measurement minus the odometry driven since."""
+        src = 'near'
         msgs = [d for t, d in self.p.messages('box_target', now - 0.6) if d.get('found')]
         if not msgs:            # still too far for the near model: steer by the far one
+            src = 'far'
             msgs = [d for t, d in self.p.messages('box_far', now - 0.6)
                     if d.get('found') and d.get('box')]
         cam, pose = self.p.camera(), self.p.slam_pose()
         if not msgs or cam is None or pose is None:
             return None
         d = msgs[-1]
-        sg = G.locate_box(cam, pose, d['box'], self.spec)
-        gap = sg.distance - self.s.robot_front_x
+        x1, y1, x2, y2 = [float(v) for v in d['box'][:4]]
+        fw, fh = (d.get('frame') or [2 * cam.cx, 2 * cam.cy])[:2]
         touch = d.get('touches') or {}
-        h = (d.get('frame') or [0, 2 * cam.cy])[1]
-        cut = touch.get('top') or touch.get('bottom') or \
-            d['box'][1] <= 2 or d['box'][3] >= h - 2
+        top_cut = bool(touch.get('top')) or y1 <= 2
+        bottom_cut = bool(touch.get('bottom')) or y2 >= fh - 2
+        sg = G.locate_box(cam, pose, d['box'], self.spec)
+        level = self.box.level if self.box is not None else sg.level
+        heights = self.spec.level_heights
+        z = heights[min(max(int(level), 0), len(heights) - 1)]
+        u = 0.5 * (x1 + x2)
+        gap, how, bearing = None, None, sg.bearing
+        if not bottom_cut:
+            p = G.point_at_height(cam, u, y2, z)
+            if p is not None:
+                gap, how = math.hypot(p[0], p[1]) - self.s.robot_front_x, 'bottom'
+                bearing = math.atan2(p[1], p[0])
+        if gap is None and not top_cut and not bottom_cut:
+            gap, how = sg.distance - self.s.robot_front_x, 'height'
         ref = self.ph.get('ref')
-        if cut and ref is not None:
-            # box cut by the image edge: its height in pixels lies; dead-reckon from the
-            # last whole view instead
+        if gap is None and ref is not None:
             gap = ref[0] - math.hypot(pose[0] - ref[1], pose[1] - ref[2])
-        elif not cut:
-            self.ph['ref'] = (gap, pose[0], pose[1])
-        if sg.level == 0:
+            how = 'odom'
+        if gap is None:
+            gap, how = sg.distance - self.s.robot_front_x, 'height?'
+        if level == 0:
             fit = self.p.scan_face()
             if fit is not None and abs(fit[0] - self.s.robot_front_x - gap) < 0.15:
-                gap = fit[0] - self.s.robot_front_x
-        return gap, sg.bearing, sg, cut
+                gap, how = fit[0] - self.s.robot_front_x, 'lidar'
+        if how != 'odom':
+            self.ph['ref'] = (gap, pose[0], pose[1])
+        return gap, bearing, sg, f'{src}/{how}'
 
     def _tick_SERVO(self, now):
-        box, ph = self.box, self.ph
-        if now - ph['t0'] > self.s.servo_timeout_s:
+        box, ph, st = self.box, self.ph, self.s
+        if now - ph['t0'] > st.servo_timeout_s:
             self.p.send_velocity(0.0, 0.0)
-            self._box_end('failed', f'visual servo timed out ({self.s.servo_timeout_s:.0f} s)')
+            self._box_end('failed', f'visual servo timed out ({st.servo_timeout_s:.0f} s)')
             return
         seen = self._box_in_view(now)
+        pose = self.p.slam_pose()
+        ahead = self.p.scan_ahead(st.servo_guard_half_width)
+        guard = None if ahead is None else ahead - st.robot_front_x
         if seen is None:
-            self.p.send_velocity(0.0, 0.0)
-            if now - ph['seen'] > self.s.servo_lost_s:
+            # Out of the image for a moment: keep turning toward where it was (no
+            # driving blind), give up after servo_lost_s.
+            w = 0.0
+            if pose is not None and now - ph['seen'] <= st.servo_lost_s:
+                rel = G.relative(pose, (box.x, box.y, 0.0))
+                w = self._servo_w(math.atan2(rel[1], rel[0]))
+            self.p.send_velocity(0.0, w)
+            self._servo_log(now, None, None, 'none', 0.0, w, guard)
+            if now - ph['seen'] > st.servo_lost_s:
+                self.p.send_velocity(0.0, 0.0)
                 self._box_end('lost', 'the box left the image during the visual servo')
             return
         ph['seen'] = now
-        gap, bearing, sg, cut = seen
-        box.level = sg.level
-        if not cut:
-            box.x, box.y = sg.x, sg.y
-        if gap <= self.s.servo_stop_gap:
+        gap, bearing, sg, how = seen
+        if how.endswith(('bottom', 'height', 'lidar')):
+            c = gap + st.robot_front_x + self.spec.depth / 2
+            box.x = pose[0] + c * math.cos(pose[2] + bearing)
+            box.y = pose[1] + c * math.sin(pose[2] + bearing)
+        stop_by = None
+        if gap <= st.servo_stop_gap:
+            stop_by = f'camera ({how})'
+        elif guard is not None and guard <= st.servo_stop_gap and abs(bearing) < 0.25:
+            stop_by = 'LiDAR'                 # something right in front: the face or a rack
+            gap = guard
+        if stop_by:
             self.p.send_velocity(0.0, 0.0)
-            self._event(f'{box.id}: in front of the box ({100 * gap:.0f} cm), level '
-                        f'{box.level}; squaring up')
-            self._goto('SQUARE', tries=0, centered=0,
-                       face_x=gap + self.s.robot_front_x)
+            self._event(f'{box.id}: in front of the box ({100 * gap:.0f} cm by {stop_by}), '
+                        f'level {box.level}; squaring up')
+            self._goto('SQUARE', tries=0, centered=0, face_x=gap + st.robot_front_x)
             return
-        w = max(-self.s.servo_max_w, min(self.s.servo_max_w, self.s.servo_k_bearing * bearing))
+        w = self._servo_w(bearing)
         v = 0.0
         if abs(bearing) < 0.25:                    # facing it: drive, slower near the end
-            v = max(0.02, min(self.s.servo_max_v, 0.6 * (gap - self.s.servo_stop_gap)))
+            v = max(st.servo_min_v, min(st.servo_max_v, 0.6 * (gap - st.servo_stop_gap)))
         self.p.send_velocity(v, w)
+        self._servo_log(now, gap, bearing, how, v, w, guard)
+
+    def _servo_w(self, bearing):
+        st = self.s
+        if abs(bearing) < math.radians(1.0):
+            return 0.0
+        w = st.servo_k_bearing * bearing
+        w = math.copysign(max(abs(w), st.servo_min_w), w)
+        return max(-st.servo_max_w, min(st.servo_max_w, w))
+
+    def _servo_log(self, now, gap, bearing, how, v, w, guard):
+        """One line per servo_log_s in the log: what the servo sees and commands."""
+        if now < self.ph.get('log_next', 0.0):
+            return
+        self.ph['log_next'] = now + self.s.servo_log_s
+        g = '-' if gap is None else f'{100 * gap:.0f} cm'
+        b = '-' if bearing is None else f'{math.degrees(bearing):+.0f} deg'
+        a = '-' if guard is None else f'{100 * guard:.0f} cm'
+        self._event(f'{self.box.id} servo: box {g} ({how}), bearing {b}, LiDAR ahead {a}'
+                    f' -> v {v:.2f} m/s, w {w:+.2f} rad/s')
 
     def _enter_SQUARE(self, tries=0, centered=0, face_x=None):
         """Parallel to the pick face. Floor box: RANSAC line on the LiDAR, turn by its
@@ -1179,7 +1243,14 @@ class RestockCore:
             dist, yaw_err = None, wrap(box.yaw + math.pi - pose[2])
         else:
             dist, yaw_err = None, 0.0
-        if abs(yaw_err) > math.radians(self.s.realign_deg) and tries < self.s.square_tries:
+        if fit is None and abs(yaw_err) > math.radians(self.s.rack_square_max_deg):
+            # rack box: the map's edge direction this far off is not believed (the
+            # servo already looks straight at the box); keep the heading
+            self._event(f'{box.id}: rack edge on the map {math.degrees(yaw_err):+.0f} deg '
+                        f'off the robot: not used, keeping the heading')
+            yaw_err = 0.0
+        if fit is not None and abs(yaw_err) > math.radians(self.s.realign_deg) and \
+                tries < self.s.square_tries:
             self._realign(pose, dist, yaw_err, tries, centered)
             return
         if abs(yaw_err) > math.radians(self.s.square_tol_deg) and tries < self.s.square_tries:

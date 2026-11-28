@@ -61,6 +61,12 @@ restock:
   servo_max_w: 0.5           # rad/s
   servo_k_bearing: 1.5       # rad/s per rad of bearing
   servo_lost_s: 3.0          # s without the box in the image: lost
+  servo_min_v: 0.04          # m/s, slower does not move the base
+  servo_min_w: 0.20          # rad/s, the same for turning
+  servo_guard_half_width: 0.10  # m, LiDAR corridor ahead: anything in it at
+                             # servo_stop_gap stops the servo (a rack edge too)
+  servo_log_s: 1.0           # s between "servo:" lines in manager.txt
+  rack_square_max_deg: 15.0  # rack box: turn by the map's edge only if within this
   servo_handoff_margin: 0.25 # m, the servo takes over from Sendero once the camera has
                              # the box within servo_start_gap + this
   servo_handoff_still_s: 4.0 # s, or once Sendero has left the robot standing this long

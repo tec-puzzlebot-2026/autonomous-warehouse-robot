@@ -302,6 +302,23 @@ class SimPorts:
             return [(t, {'detections': []}) for t in stamps]
         return []
 
+    def scan_ahead(self, half_width=0.10, max_range=1.5):
+        """Nearest thing straight ahead on the LiDAR: a box face (for a rack box, the
+        rack's edge in line with it), plus the extra obstacles in self.walls_ahead."""
+        best = None
+        for b in self.boxes:
+            if b.state not in ('shelf', 'floor'):
+                continue
+            name, (fx, fy), normal = self._face(b)
+            rel = G.relative(tuple(self.pose), (fx, fy, 0.0))
+            if 0.0 < rel[0] < max_range and abs(rel[1]) < half_width:
+                best = rel[0] if best is None else min(best, rel[0])
+        for wx, wy in getattr(self, 'walls_ahead', []):
+            rel = G.relative(tuple(self.pose), (wx, wy, 0.0))
+            if 0.0 < rel[0] < max_range and abs(rel[1]) < half_width:
+                best = rel[0] if best is None else min(best, rel[0])
+        return best
+
     def scan_face(self):
         """LiDAR fit of a floor box face right in front of the robot."""
         x, y, th = self.pose
@@ -470,6 +487,37 @@ def test_vision_servo_takes_over_when_the_sendero_leg_never_ends(tmp_path):
     assert any('visual servo takes over' in t for t in ports.logs), ports.logs[-10:]
     run_on(core, ports)
     assert core.done and box.state == 'dock', ports.logs[-15:]
+
+
+def box_depth():
+    return G.BoxSpec().depth
+
+
+def test_vision_servo_stops_on_the_lidar_before_a_rack_edge(tmp_path):
+    """Something sticks out in front of the box (a rack edge): the LiDAR corridor ahead
+    stops the servo there, the robot never drives into it."""
+    box = box_on_rack('soriene')
+    core, ports = make_core(tmp_path, [box], settings=rc.RestockSettings(**VISION))
+    run(core, ports, stop_when=lambda: core.phase == 'SERVO')
+    x, y, _ = ports.pose
+    a = math.atan2(box.y - y, box.x - x)                     # robot -> box
+    d = math.hypot(box.x - x, box.y - y) - box_depth() / 2 - 0.12   # 12 cm before the face
+    ports.walls_ahead = [(x + d * math.cos(a) - k * math.sin(a), y + d * math.sin(a) +
+                          k * math.cos(a)) for k in (-0.05, 0.0, 0.05)]
+    run_on(core, ports, stop_when=lambda: core.phase == 'SQUARE')
+    assert any('by LiDAR' in t for t in ports.logs), ports.logs[-10:]
+    edge = ports.scan_ahead()
+    assert edge is not None and edge - core.s.robot_front_x > 0.15
+
+
+def test_vision_servo_logs_what_it_sees_and_commands(tmp_path):
+    box = box_against_left_wall('emezon')
+    core, ports = make_core(tmp_path, [box], settings=rc.RestockSettings(**VISION))
+    run(core, ports, stop_when=lambda: core.phase == 'SQUARE')
+    lines = [t for t in ports.logs if ' servo: box ' in t]
+    assert lines and all('-> v ' in t for t in lines)
+    v = [float(t.split('-> v ')[1].split()[0]) for t in lines]
+    assert all(x == 0.0 or x >= core.s.servo_min_v - 1e-9 for x in v)   # no creeping
 
 
 def test_vision_approach_ends_lost_when_the_box_leaves_the_image(tmp_path):

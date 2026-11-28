@@ -147,6 +147,20 @@ def locate_box(cam, robot_pose, image_box, spec=BoxSpec()):
     return BoxSighting(cx, cy, bottom_z, level, dist, bearing)
 
 
+def point_at_height(cam, u, v, z_floor):
+    """base_link (x, y) where the ray of pixel (u, v) is z_floor above the floor, or
+    None (the ray never gets there in front of the camera). With a box's bottom edge
+    and its level's height this gives the distance to the box even when its top is cut
+    off by the image border (a rack box close to the camera)."""
+    o = cam.point_base(u, v, 0.0)
+    r = cam.point_base(u, v, 1.0) - o
+    dz = z_floor - cam.base_height - o[2]
+    if abs(r[2]) < 1e-6 or dz / r[2] <= 0.0:
+        return None
+    d = dz / r[2]
+    return float(o[0] + d * r[0]), float(o[1] + d * r[1])
+
+
 def face_center_offset(cam, image_box, forward, spec=BoxSpec(), frame_w=None):
     """Sideways offset [m, + = left] of a face's center from base_link's x axis, for a
     face `forward` m ahead (base_link x; the LiDAR fit when the robot is parallel to it).

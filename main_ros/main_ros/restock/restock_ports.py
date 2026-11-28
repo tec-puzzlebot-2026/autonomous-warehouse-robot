@@ -605,6 +605,16 @@ class RestockPorts:
         y = self.laser_mount[1] + r[ok] * np.sin(a[ok])
         return np.column_stack([x, y])
 
+    def scan_ahead(self, half_width=0.10, max_range=1.5):
+        """Distance [m, from base_link] to the nearest LiDAR point straight ahead, in a
+        corridor as wide as the robot, or None."""
+        pts = self._scan_points()
+        if pts is None:
+            return None
+        ahead = pts[(pts[:, 0] > 0.0) & (np.abs(pts[:, 1]) < half_width) &
+                    (pts[:, 0] < max_range)]
+        return float(ahead[:, 0].min()) if len(ahead) else None
+
     def scan_face(self):
         pts = self._scan_points()
         return None if pts is None else G.face_from_scan(pts)
