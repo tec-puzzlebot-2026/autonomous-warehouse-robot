@@ -126,6 +126,9 @@ class RestockSettings:
     deliver_to: str = 'docks'
     # Box selection.
     max_far_range: float = 3.0         # m, farther sightings are ignored (seen again later)
+    # A navigation goal the robot does not move for this long is given up (retried
+    # once): Sendero holding a goal without driving never blocks restocking. 0 = off.
+    nav_stall_s: float = 25.0
     min_far_conf: float = 0.90         # far detector confidence that starts a box task
     # With boxes_always_on: a box seen while driving to a viewpoint stops the patrol
     # there (the route resumes at that viewpoint after the box).
@@ -375,6 +378,17 @@ class RestockCore:
         if not (self.paused or self.error or self.done):
             self._crosscheck(now)
             self._watch_drop_zone(now)
+            self._show_zones(now)
+
+    def _show_zones(self, now):
+        """Publish the zones again every few seconds, so Foxglove shows them whenever it
+        subscribes (a latched message alone is not always replayed by the bridge)."""
+        if self.world is None or now < getattr(self, '_zones_next', 0.0):
+            return
+        self._zones_next = now + 3.0
+        show = getattr(self.p, 'show_zones', None)
+        if show:
+            show(self.world.zones)
 
     def _watch_drop_zone(self, now):
         """No drop zone in the mission folder (its ArUco was not seen while mapping): take
@@ -417,13 +431,15 @@ class RestockCore:
         if enter is not None:
             enter(**args)
 
-    def _await(self, handle, timeout, ok, fail, what):
-        """Wait for a motion / action handle; then ok() or fail(reason)."""
+    def _await(self, handle, timeout, ok, fail, what, nav=False):
+        """Wait for a motion / action handle; then ok() or fail(reason). nav: a Sendero
+        goal, also given up when the robot does not move for nav_stall_s."""
         if handle is None:
             fail(f'{what}: not available')
             return
-        self.wait = {'h': handle, 'until': self.p.now() + timeout, 'ok': ok, 'fail': fail,
-                     'what': what}
+        now = self.p.now()
+        self.wait = {'h': handle, 'until': now + timeout, 'ok': ok, 'fail': fail,
+                     'what': what, 'nav': nav, 'moved_at': now, 'last': None}
 
     def _poll_wait(self, now):
         w = self.wait
@@ -443,6 +459,28 @@ class RestockCore:
             except Exception:                  # noqa: BLE001
                 pass
             w['fail'](f'{w["what"]}: timed out')
+            return
+        if w.get('nav') and self.s.nav_stall_s > 0 and self._stalled(w, now):
+            self.wait = None
+            try:
+                h.cancel()
+            except Exception:                  # noqa: BLE001
+                pass
+            w['fail'](f'{w["what"]}: no progress (the robot did not move for '
+                      f'{self.s.nav_stall_s:.0f} s)')
+
+    def _stalled(self, w, now):
+        """True when the robot has not moved (3 cm) nor turned (0.1 rad) for nav_stall_s
+        while a navigation goal is active: Sendero holds it without driving."""
+        pose = self.p.slam_pose()
+        if pose is None:
+            return False
+        last = w.get('last')
+        if last is None or math.hypot(pose[0] - last[0], pose[1] - last[1]) > 0.03 \
+                or abs(wrap(pose[2] - last[2])) > 0.1:
+            w['last'], w['moved_at'] = tuple(pose), now
+            return False
+        return now - w['moved_at'] > self.s.nav_stall_s
 
     def _stop_everything(self, cancel_forklift):
         if self.wait is not None:
@@ -481,7 +519,7 @@ class RestockCore:
                 self._event(f'{reason}; clearing the costmaps and trying once more')
                 self.p.clear_costmaps()
                 self._await(self.p.navigate(pose, profile), self.s.nav_timeout_s,
-                            done, fail, what)
+                            done, fail, what, nav=True)
             else:
                 fail(reason)
 
@@ -490,7 +528,8 @@ class RestockCore:
             ok()
 
         self._nav_retry.pop(key, None)
-        self._await(self.p.navigate(pose, profile), self.s.nav_timeout_s, done, failed, what)
+        self._await(self.p.navigate(pose, profile), self.s.nav_timeout_s, done, failed, what,
+                    nav=True)
 
     # ── vision collection ────────────────────────────────────────────────
     def _start_look(self, streams, seconds):

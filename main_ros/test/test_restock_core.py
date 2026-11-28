@@ -574,3 +574,23 @@ def test_a_box_seen_while_driving_stops_the_patrol(tmp_path):
     run(core, ports)
     assert core.done and core.outcome.startswith('COMPLETE'), core.outcome
     assert any('spotted while driving' in line or 'spotted at' in line for line in ports.logs)
+
+
+def test_a_goal_sendero_holds_without_moving_is_given_up(tmp_path):
+    """The approach goal never ends and the robot does not move: after nav_stall_s it is
+    retried once, then the box is given up and the patrol goes on."""
+    boxes = [box_against_left_wall('walnut')]
+    core, ports = make_core(tmp_path, boxes)
+    core.s.nav_stall_s = 5.0
+    plain = ports.navigate
+
+    def navigate(pose, profile):
+        if core.phase == 'APPROACH':
+            ports.calls.append(('nav', tuple(round(v, 2) for v in pose), profile))
+            return Handle(ports, 1e9)                  # held for ever, robot still
+        return plain(pose, profile)
+    ports.navigate = navigate
+    run(core, ports)
+    assert core.done
+    assert any('no progress' in line for line in ports.logs)
+    assert any(b.status == 'failed' for b in core.boxes)
