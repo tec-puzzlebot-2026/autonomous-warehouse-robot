@@ -111,3 +111,22 @@ def test_the_dock_openings_are_found_without_logos():
     assert all(abs(math.sin(o.entrance[2]) - 1.0) < 1e-6 for o in ops)   # facing in (+y)
     near = find_openings(grid, near=(1.1, RW.H), search=0.5)
     assert len(near) == 1
+
+
+def test_map_restock_picks_the_newest_folder_with_a_drop_zone(tmp_path):
+    import pytest
+    from main_ros.restock import mission_store as ms
+    root = tmp_path / 'missions'
+    for name, zone in (('20261128_001102', None), ('20261128_001226', 'drop_zone'),
+                       ('20261128_010000', 'aruco_7')):
+        f = root / name
+        f.mkdir(parents=True)
+        (f / ms.MAP_YAML).write_text('image: map.pgm\n')
+        (f / ms.SESSION).write_bytes(b'')
+        if zone:
+            ms.write_yaml(str(f / ms.ZONES), {'zones': [{'label': zone}]})
+    store = ms.MissionStore(str(root))
+    assert store.resolve('restock').endswith('20261128_001226')
+    empty = ms.MissionStore(str(tmp_path / 'none'))
+    with pytest.raises(FileNotFoundError):
+        empty.resolve('restock')

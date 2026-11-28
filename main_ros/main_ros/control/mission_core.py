@@ -193,6 +193,23 @@ class MissionSettings:
     # Stage 4: 'full' = restocking (camera, detectors, forklift); 'route_only' = only
     # drive the stage-3 route (restock/route_follower.py), nothing else is started.
     restock_mode: str = 'full'
+    # Testing restocking from a saved map (launch: start_pose, restock_only):
+    start_pose: str = ''            # 'x,y,yaw' on the loaded map: sent as the robot's pose
+    restock_only: bool = False      # after localizing: skip stage 2, plan, start stage 4
+
+
+def parse_pose(text):
+    """'x,y,yaw' (or 'origin') -> (x, y, yaw); '' or bad text -> None."""
+    text = str(text or '').strip().lower()
+    if not text:
+        return None
+    if text in ('origin', 'zero', '0'):
+        return (0.0, 0.0, 0.0)
+    try:
+        v = [float(t) for t in text.replace(' ', ',').split(',') if t]
+    except ValueError:
+        return None
+    return (v[0], v[1], v[2] if len(v) > 2 else 0.0) if len(v) >= 2 else None
 
 
 def describe_checks(checks):
@@ -478,9 +495,27 @@ class MissionCore:
         if str(st.get('localized', '0')) in ('1', 'true', 'True'):
             self.was_localized = True
             self._event('Planisferio localized on the loaded map')
+            if self.s.restock_only:
+                self.skipped_stages.add('quality')
+                self._event('restock_only: stage 2 skipped, planning the route, then '
+                            'restocking')
+                self._begin_planning()
+                return
             self._set(MAPPING_DONE, 'Map loaded and localized. S improves the map '
                       '(stage 2), K skips to the route (stage 3).')
             self._preview_tour()
+            return
+        pose = parse_pose(self.s.start_pose)
+        send = getattr(self.p, 'send_initial_pose', None)
+        if pose is not None and send and now >= getattr(self, '_pose_next', 0.0):
+            self._pose_next = now + 3.0               # again until Planisferio takes it
+            send(pose)
+            self._event(f'start_pose sent: x {pose[0]:.2f}, y {pose[1]:.2f}, '
+                        f'yaw {pose[2]:.2f}')
+
+    def _tick_route_ready(self, now):
+        if self.s.restock_only and self.restock is None:
+            self._begin_restocking()
 
     def _preview_tour(self):
         """Show the stage-2 tour on the map before it is started (if the ports can)."""

@@ -16,6 +16,13 @@ One run, four stages; after each one the monitor waits for a key (S next, K skip
     3 route        the restocking patrol route on the final map
     4 restocking   boxes to the docks
     map:=latest | <mission folder>   start from a saved map: stage 1 is skipped
+    map:=restock                     the newest saved map that has a drop zone
+    start_pose:=origin | x,y,yaw     with map:=, the robot's pose is sent for you
+    restock_only:=true               with map:=, straight on to stages 3 and 4
+
+    Test restocking only (Isaac stopped and played, so the robot is at its start):
+      ros2 launch main_ros main.launch.py mode:=sim map:=restock start_pose:=origin \
+          restock_only:=true autostart:=true
 
 The monitor is opened on the host PC by host.launch.py.
 Ctrl+C here halts the robot and closes every script. X in the monitor does
@@ -45,6 +52,9 @@ def generate_launch_description():
             'config_file': LaunchConfiguration('config_file'),
             'autostart': ParameterValue(LaunchConfiguration('autostart'), value_type=bool),
             'map': ParameterValue(LaunchConfiguration('map'), value_type=str),
+            'start_pose': ParameterValue(LaunchConfiguration('start_pose'), value_type=str),
+            'restock_only': ParameterValue(LaunchConfiguration('restock_only'),
+                                           value_type=bool),
         }],
         # Give the Program Manager time to halt the robot and close every
         # script after Ctrl+C before launch escalates to SIGTERM / SIGKILL.
@@ -61,6 +71,12 @@ def generate_launch_description():
         DeclareLaunchArgument('map', default_value='',
                               description='start from a saved map: latest, or a mission '
                                           'folder name or path in <maps_dir>/missions'),
+        DeclareLaunchArgument('start_pose', default_value='',
+                              description="with map:=, the robot's pose on that map, sent "
+                                          'for you: x,y,yaw or origin (the mapping start)'),
+        DeclareLaunchArgument('restock_only', default_value='false',
+                              description='with map:=, once localized: skip stage 2, plan '
+                                          'the route and start restocking by itself'),
         manager,
         # The Program Manager closed (after X, or it crashed): end the launch.
         RegisterEventHandler(OnProcessExit(

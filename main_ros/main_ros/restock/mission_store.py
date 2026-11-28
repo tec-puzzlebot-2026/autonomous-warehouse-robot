@@ -91,8 +91,16 @@ class MissionStore:
         return out
 
     def resolve(self, name=''):
-        """The mission folder to use: `name` (a folder name or a path), else the
-        latest. Raises FileNotFoundError with the reason."""
+        """The mission folder to use: `name` (a folder name or a path), 'restock' (the
+        newest folder with a drop zone: ready to test restocking), else the latest.
+        Raises FileNotFoundError with the reason."""
+        if name == 'restock':
+            for path in reversed(self.folders()):
+                zones = (read_yaml(os.path.join(path, ZONES), {}) or {}).get('zones') or []
+                if any(z.get('label') == 'drop_zone' for z in zones):
+                    return path
+            raise FileNotFoundError(f'no mission folder in {self.root} has a drop zone: run '
+                                    'stage 2 until it sees ArUco 21 (then F) once')
         if name:
             path = (name if os.path.isabs(os.path.expanduser(name))
                     else os.path.join(self.root, name))

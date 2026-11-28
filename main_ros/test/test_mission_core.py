@@ -398,6 +398,28 @@ def test_saved_map_waits_for_the_pose_then_offers_stage_2():
     assert core.state == mc.ROUTE_READY and p.planned == '/ws/maps/missions/old'
 
 
+def test_restock_only_sends_the_start_pose_and_goes_straight_to_stage_4():
+    p = FakePorts()
+    poses = []
+    p.send_initial_pose = poses.append
+    settings = mc.MissionSettings(start_pose='origin', restock_only=True)
+    core = mc.MissionCore(STEPS, p, settings, start_folder='/ws/maps/missions/old')
+    assert core.command('S')[0]
+    run(core, p, 10)
+    assert core.state == mc.LOCALIZING and poses and poses[0] == (0.0, 0.0, 0.0)
+    p.slam['localized'] = '1'                             # Planisferio took the pose
+    run(core, p, 20)
+    assert 'quality' in core.skipped_stages and p.planned == '/ws/maps/missions/old'
+    assert core.restock is not None, core.state           # stage 4 started by itself
+
+
+def test_parse_pose():
+    assert mc.parse_pose('') is None and mc.parse_pose('junk') is None
+    assert mc.parse_pose('origin') == (0.0, 0.0, 0.0)
+    assert mc.parse_pose('1.5, -0.2, 3.14') == (1.5, -0.2, 3.14)
+    assert mc.parse_pose('1,2') == (1.0, 2.0, 0.0)
+
+
 def test_an_error_in_stage_2_resumes_the_tour_after_the_bringup():
     core, p = ready_system()
     map_stage_1(core, p)

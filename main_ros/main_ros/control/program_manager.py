@@ -53,7 +53,7 @@ import time
 
 import rclpy
 import yaml
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import PoseWithCovarianceStamped, Twist
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
@@ -168,6 +168,9 @@ class ProgramManager(Node):
         auto = self.declare_parameter('autostart', False).value
         self.autostart = str(auto).strip().lower() in ('true', '1', 'yes')
         map_arg = str(self.declare_parameter('map', '').value or '').strip()
+        start_pose = str(self.declare_parameter('start_pose', '').value or '').strip()
+        restock_only = str(self.declare_parameter('restock_only', False).value
+                           ).strip().lower() in ('true', '1', 'yes')
         if self.mode not in ('sim', 'real'):
             raise ValueError(f'mode must be "sim" or "real", got "{self.mode}"')
         self.config_dir = os.path.dirname(cfg_file) if cfg_file else find_config_dir()
@@ -213,6 +216,10 @@ class ProgramManager(Node):
         os.makedirs(self.placeholders['maps_dir'], exist_ok=True)
         self.placeholders['log_dir'] = self.log_dir
         self._mlog = open(os.path.join(self.log_dir, 'manager.txt'), 'a', buffering=1)
+        if self.start_folder:
+            self.log(f'map:={map_arg} -> {self.start_folder}'
+                     + (f', start_pose {start_pose}' if start_pose else '')
+                     + (', restock_only' if restock_only else ''))
 
         self.steps = self._load_steps()
         self.sup = ProcessSupervisor(self.log_dir, logger=self._log_line)
@@ -258,6 +265,11 @@ class ProgramManager(Node):
         m = self.cfg.get('mission', {})
         settings = mc.MissionSettings(**{k: v for k, v in m.items()
                                          if k in mc.MissionSettings.__dataclass_fields__})
+        if self.start_folder:                       # testing restocking from a saved map
+            settings.start_pose = start_pose or settings.start_pose
+            settings.restock_only = restock_only or settings.restock_only
+        self.initial_pose_pub = self.create_publisher(PoseWithCovarianceStamped,
+                                                      '/initialpose', 1)
         self.core = mc.MissionCore(self.steps, self, settings, self.mode, self.start_folder)
 
         self.create_timer(1.0 / float(self.cfg.get('tick_hz', 10.0)), self._tick)
@@ -395,6 +407,20 @@ class ProgramManager(Node):
     def explorer_status(self):
         text, t = self.reports.get('explorer_status', ('', None))
         return text, (time.monotonic() - t) if t is not None else float('inf')
+
+    def send_initial_pose(self, pose):
+        """The robot's pose on the loaded map (as RViz 2D Pose Estimate does)."""
+        msg = PoseWithCovarianceStamped()
+        msg.header.frame_id = 'map'
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.pose.pose.position.x, msg.pose.pose.position.y = float(pose[0]), float(pose[1])
+        msg.pose.pose.orientation.z = math.sin(pose[2] / 2.0)
+        msg.pose.pose.orientation.w = math.cos(pose[2] / 2.0)
+        cov = [0.0] * 36
+        cov[0] = cov[7] = 0.05 ** 2
+        cov[35] = 0.05 ** 2
+        msg.pose.covariance = cov
+        self.initial_pose_pub.publish(msg)
 
     def slam_status(self):
         text, _ = self.reports.get('slam_status', ('', None))
