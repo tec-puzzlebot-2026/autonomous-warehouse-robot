@@ -164,12 +164,16 @@ class _MotionJob:
 class RestockPorts:
     """Ports of RestockCore on the Program Manager's node."""
 
-    def __init__(self, node, cfg, log, mission_folder, slam_status):
+    def __init__(self, node, cfg, log, mission_folder, slam_status, clock=None):
         """
         node: the Program Manager node. cfg: config/restock.yaml (dict).
         log: function(text). mission_folder: function() -> folder path.
         slam_status: function() -> dict of Planisferio's /slam/status.
+        clock: function() -> seconds; every time of restocking and the map tour (dwell,
+        looks, timeouts, sighting ages). The simulation time in the sim, so the timing
+        is the robot's even when Isaac runs slower than real time. Default: wall time.
         """
+        self.clock = clock or time.monotonic
         from rclpy.action import ActionClient
         self.node = node
         self.cfg = cfg
@@ -274,7 +278,7 @@ class RestockPorts:
         except ValueError:
             return
         if isinstance(data, dict) and not data.get('disabled'):
-            self.buffers[stream].append((time.monotonic(), data))
+            self.buffers[stream].append((self.clock(), data))
 
     def _on_landmarks(self, msg):
         try:
@@ -285,11 +289,11 @@ class RestockPorts:
     def _on_pose(self, which, msg):
         p = msg.pose.pose
         pose = (p.position.x, p.position.y, yaw_of(p.orientation))
-        setattr(self, which, (pose, time.monotonic()))
+        setattr(self, which, (pose, self.clock()))
 
     def _on_ekf_status(self, msg):
         self.ekf_state = (msg.data.strip().split()[0] if msg.data.strip() else '',
-                          time.monotonic())
+                          self.clock())
 
     def _on_odom(self, msg):
         p = msg.pose.pose
@@ -313,7 +317,7 @@ class RestockPorts:
     # ports: time, log, folder
     # =====================================================================
     def now(self):
-        return time.monotonic()
+        return self.clock()
 
     def mission_folder(self):
         return self._folder()
@@ -546,7 +550,7 @@ class RestockPorts:
 
     def _fresh(self, value):
         pose, t = value
-        return pose if pose is not None and time.monotonic() - t <= self.pose_max_age else None
+        return pose if pose is not None and self.clock() - t <= self.pose_max_age else None
 
     def slam_pose(self):
         return self._fresh(self.slam)
@@ -558,7 +562,7 @@ class RestockPorts:
 
     def ekf_status(self):
         state, t = self.ekf_state
-        return state if time.monotonic() - t < 3.0 else ''
+        return state if self.clock() - t < 3.0 else ''
 
     def ekf_pose(self):
         return self._fresh(self.ekf) if self.ekf_status() == 'TRACK' else None

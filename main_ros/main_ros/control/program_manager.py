@@ -333,6 +333,14 @@ class ProgramManager(Node):
     def now(self):
         return time.monotonic()
 
+    def robot_clock(self):
+        """Seconds of the robot's time: Isaac's /clock in the sim (it runs slower than
+        real time, so restocking's timing must follow it), wall time otherwise."""
+        last = self._sim_clock.get('last')
+        if self.mode == 'sim' and last is not None:
+            return float(last)
+        return time.monotonic()
+
     def prepare_bringup(self):
         """Before a bring-up from scratch, kill leftovers of an earlier run."""
         if any(self.sup.alive(s.name) for s in self.steps):
@@ -499,7 +507,8 @@ class ProgramManager(Node):
             ports['topics'] = topics
             cfg['ports'] = ports
             self.restock_ports = RestockPorts(
-                self, cfg, self.log, lambda: self.mission_folder, self.slam_status)
+                self, cfg, self.log, lambda: self.mission_folder, self.slam_status,
+                clock=self.robot_clock)
         return self.restock_ports
 
     def make_restock(self, mission, folder):
