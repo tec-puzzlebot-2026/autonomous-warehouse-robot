@@ -132,6 +132,9 @@ class RestockSettings:
     # there (turn - drive - turn), at most front_max_moves times. No code seen after
     # front_look_s: the face in front of the robot is taken.
     servo_front_gap: float = 0.45
+    # Close up with no detection: drive on the LiDAR if it sees something straight
+    # ahead within this of where the box should be (by odometry since the last view).
+    servo_blind_tol: float = 0.10
     front_tol_deg: float = 10.0
     front_tol_m: float = 0.04
     front_max_moves: int = 2
@@ -1172,10 +1175,12 @@ class RestockCore:
         on the map and the one nearest the tracked box wins, if within servo_match_m.
         Near model first, the far one when the near one has none of ours."""
         box = self.box
+        why = []
         for src, stream in (('near', 'box_target'), ('far', 'box_far')):
             msgs = [(t, d) for t, d in self.p.messages(stream, since)
                     if d.get('found') or d.get('all')]
             if not msgs:
+                why.append(f'{src}: no box in the image')
                 continue
             t, d = msgs[-1]
             frame = d.get('frame') or [2 * cam.cx, 2 * cam.cy]
@@ -1192,15 +1197,48 @@ class RestockCore:
                                           'left': b[0] <= 2, 'right': b[2] >= frame[0] - 2}})
             if box is None:
                 return (src, t, cands[0]) if cands else None
+            rel = G.relative(pose, (box.x, box.y, 0.0))
+            want = math.atan2(rel[1], rel[0])           # where we track it, as a bearing
             best = None
             for c in cands:
-                sg = G.locate_box(cam, pose, c['box'], self.spec)
-                err = math.hypot(sg.x - box.x, sg.y - box.y)
+                where = self._place(cam, pose, c)
+                if where is not None:
+                    err = math.hypot(where[0] - box.x, where[1] - box.y)
+                else:                                   # cut top and bottom: bearing only
+                    x1, _, x2, _ = c['box'][:4]
+                    err = abs(wrap(cam.bearing(0.5 * (x1 + x2)) - want)) * max(rel[0], 0.3)
                 if best is None or err < best[0]:
                     best = (err, c)
             if best is not None and best[0] <= self.s.servo_match_m:
                 return src, t, best[1]
+            why.append(f'{src}: {len(cands)} box(es), nearest {100 * best[0]:.0f} cm from ours'
+                       if best else f'{src}: none')
+        self.ph['pick_why'] = '; '.join(why) or 'no detections'
         return None
+
+    def _place(self, cam, pose, c):
+        """Map (x, y) of a detected box's center, the same way the servo measures it:
+        its bottom edge at its level's height (its top may be cut off close up), else its
+        height in pixels (whole box only), else None."""
+        x1, y1, x2, y2 = [float(v) for v in c['box'][:4]]
+        frame = c.get('frame') or [2 * cam.cx, 2 * cam.cy]
+        touch = c.get('touches') or {}
+        top_cut = bool(touch.get('top')) or y1 <= 2
+        bottom_cut = bool(touch.get('bottom')) or y2 >= frame[1] - 2
+        level = self.box.level if self.box is not None else 0
+        heights = self.spec.level_heights
+        z = heights[min(max(int(level), 0), len(heights) - 1)]
+        p = None
+        if not bottom_cut:
+            p = G.point_at_height(cam, 0.5 * (x1 + x2), y2, z)
+        if p is None and not top_cut and not bottom_cut:
+            sg = G.locate_box(cam, pose, c['box'], self.spec)
+            return sg.x, sg.y
+        if p is None:
+            return None
+        r = math.hypot(p[0], p[1]) + self.spec.depth / 2
+        a = math.atan2(p[1], p[0])
+        return G.transform_point(pose, (r * math.cos(a), r * math.sin(a)))
 
     def _tick_SERVO(self, now):
         box, ph, st = self.box, self.ph, self.s
@@ -1215,6 +1253,32 @@ class RestockCore:
         seen = self._box_in_view(now)
         ahead = self.p.scan_ahead(st.servo_guard_half_width)
         guard = None if ahead is None else ahead - st.robot_front_x
+        if seen is None and ph.get('front_wait') is not None and not ph['front_ok']:
+            # stopped close to the box, looking for its QR code: no detection needed
+            self.p.send_velocity(0.0, 0.0)
+            ph['seen'] = now
+            self._front_check(now, pose)
+            return
+        if seen is None and ph['front_ok'] and guard is not None and pose is not None \
+                and ph.get('ref') is not None:
+            # Close up the detectors can lose the box (cut by the image, hidden by the
+            # rack): the LiDAR still sees what is straight ahead where the box should
+            # be, so finish the last centimetres on it.
+            ref = ph['ref']
+            expect = ref[0] - math.hypot(pose[0] - ref[1], pose[1] - ref[2])
+            if abs(guard - expect) < st.servo_blind_tol and expect < st.servo_front_gap + 0.1:
+                ph['seen'] = now
+                if guard <= st.servo_stop_gap:
+                    self.p.send_velocity(0.0, 0.0)
+                    self._event(f'{box.id}: in front of the box ({100 * guard:.0f} cm by '
+                                f'LiDAR, the camera lost it), level {box.level}; squaring up')
+                    self._goto('SQUARE', tries=0, centered=0, face_x=guard + st.robot_front_x)
+                    return
+                v = max(st.servo_min_v, min(st.servo_max_v, 0.6 * (guard - st.servo_stop_gap)))
+                self.p.send_velocity(v, 0.0)
+                self._servo_log(now, guard, 0.0, 'lidar only: ' + ph.get('pick_why', '?'), v,
+                                0.0, guard)
+                return
         if seen is None:
             # Out of the image for a moment: keep turning toward where it was (no
             # driving blind), give up after servo_lost_s.
@@ -1223,7 +1287,7 @@ class RestockCore:
                 rel = G.relative(pose, (box.x, box.y, 0.0))
                 w = self._servo_w(math.atan2(rel[1], rel[0]))
             self.p.send_velocity(0.0, w)
-            self._servo_log(now, None, None, 'none', 0.0, w, guard)
+            self._servo_log(now, None, None, 'none: ' + ph.get('pick_why', '?'), 0.0, w, guard)
             if now - ph['seen'] > st.servo_lost_s:
                 self.p.send_velocity(0.0, 0.0)
                 self._box_end('lost', 'the box left the image during the visual servo')

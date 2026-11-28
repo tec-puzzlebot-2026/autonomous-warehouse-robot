@@ -79,6 +79,8 @@ restock:
   front_tol_m: 0.04
   front_max_moves: 2
   front_look_s: 3.0          # s
+  servo_blind_tol: 0.10      # m, close up with no detection: drive on the LiDAR if it
+                             # sees something this close to where the box should be
   servo_handoff_margin: 0.25 # m, the servo takes over from Sendero once the camera has
                              # the box within servo_start_gap + this
   servo_handoff_still_s: 4.0 # s, or once Sendero has left the robot standing this long

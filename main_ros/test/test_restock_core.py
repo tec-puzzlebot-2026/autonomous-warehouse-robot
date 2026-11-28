@@ -581,6 +581,26 @@ def test_vision_servo_moves_in_front_of_the_qr_face(tmp_path):
     assert core.done and box.state == 'dock' and core.per_company()['soriene'] == 1
 
 
+def test_vision_servo_finishes_on_the_lidar_when_the_camera_loses_the_box(tmp_path):
+    """Close to the box the detectors see nothing any more (box cut by the image, hidden
+    by the rack): the LiDAR still sees it straight ahead, the servo ends on it."""
+    box = box_against_left_wall('emezon', qr='right')        # no QR on the near side
+    core, ports = make_core(tmp_path, [box], settings=rc.RestockSettings(**VISION))
+    plain = ports.messages
+
+    def messages(stream, since):
+        out = plain(stream, since)
+        near = math.hypot(box.x - ports.pose[0], box.y - ports.pose[1]) < 0.62
+        if near and core.phase == 'SERVO' and stream in ('box_target', 'box_far'):
+            return [(t, {'found': False, 'stamp': t}) for t, _ in out]
+        return out
+    ports.messages = messages
+    run(core, ports, stop_when=lambda: core.phase in ('SQUARE', 'RESUME_GO'))
+    assert core.phase == 'SQUARE', ports.logs[-12:]
+    assert any('by LiDAR, the camera lost it' in t for t in ports.logs), ports.logs[-12:]
+    assert any('lidar only' in t for t in ports.logs)
+
+
 def test_vision_approach_ends_lost_when_the_box_leaves_the_image(tmp_path):
     box = box_against_left_wall('emezon')
     core, ports = make_core(tmp_path, [box], settings=rc.RestockSettings(**VISION))
