@@ -366,6 +366,15 @@ class RestockPorts:
             return True, ''
         return False, getattr(result, 'error_msg', '') or f'status {status}'
 
+    def send_velocity(self, v, w):
+        """One velocity command (the visual servo sends one per tick)."""
+        if self.job is not None:
+            self.job.cancel()
+            self.job = None
+        cmd = Twist()
+        cmd.linear.x, cmd.angular.z = float(v), float(w)
+        self.cmd_pub.publish(cmd)
+
     def drive_straight(self, distance, centered=False):
         return self._start_job('drive', distance, centered)
 

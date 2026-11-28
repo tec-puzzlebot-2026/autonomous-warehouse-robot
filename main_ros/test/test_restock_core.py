@@ -125,8 +125,19 @@ class SimPorts:
             self.pose[2] = wrap(self.pose[2] + angle)
         return Handle(self, 0.3, on_done=turned)
 
+    def send_velocity(self, v, w):
+        self.cmd = (float(v), float(w))
+
+    def step(self, dt):
+        """Integrate the last velocity command (visual servo) over dt."""
+        v, w = getattr(self, 'cmd', (0.0, 0.0))
+        self.pose[0] += v * dt * math.cos(self.pose[2])
+        self.pose[1] += v * dt * math.sin(self.pose[2])
+        self.pose[2] = wrap(self.pose[2] + w * dt)
+
     def cancel_motion(self):
         self.calls.append(('cancel_motion',))
+        self.cmd = (0.0, 0.0)
 
     def clear_costmaps(self):
         pass
@@ -327,9 +338,10 @@ def make_core(tmp_path, boxes, mission='full', settings=None, **kw):
     ports = SimPorts(folder, boxes, **kw)
     ports.world_docks = docks
     # the full QR search (all faces, floor fallback); the no-QR shortcut is tested below
-    s = settings or rc.RestockSettings(look_settle_s=0.2, look_s=0.5, read_s=0.5,
-                                       acquire_s=0.4, logo_look_s=0.4, survey=False,
-                                       inspect_other_faces=True, no_qr_company='')
+    s = settings or rc.RestockSettings(
+        approach_mode='sendero', look_settle_s=0.2, look_s=0.5, read_s=0.5,
+        acquire_s=0.4, logo_look_s=0.4, survey=False,
+        inspect_other_faces=True, no_qr_company='')
     core = rc.RestockCore(ports, s, mission)
     return core, ports
 
@@ -338,12 +350,23 @@ def run(core, ports, until_done=True, max_s=3000.0, dt=0.1, stop_when=None):
     core.start()
     while ports.t < max_s:
         core.tick()
+        ports.step(dt)
         ports.t = round(ports.t + dt, 3)
         if until_done and core.done:
             return
         if stop_when and stop_when():
             return
         if core.error:
+            return
+
+
+def run_on(core, ports, max_s=3000.0, dt=0.1, stop_when=None):
+    """Keep ticking a core that run() already started."""
+    while ports.t < max_s and not core.done and not core.error:
+        core.tick()
+        ports.step(dt)
+        ports.t = round(ports.t + dt, 3)
+        if stop_when and stop_when():
             return
 
 
@@ -377,9 +400,70 @@ def test_full_run_delivers_floor_and_rack_boxes(tmp_path):
         assert len(on - {'qr', 'box_far'}) <= 1, on
 
 
+VISION = dict(look_settle_s=0.2, look_s=0.5, read_s=0.5, acquire_s=0.4, logo_look_s=0.4,
+              survey=False, approach_mode='vision', no_qr_company='walnut')
+
+
+def test_vision_approach_servos_squares_reads_and_picks(tmp_path):
+    """Classical CV approach: no Align action at the box (ALIGN is the Sendero path)."""
+    boxes = [box_against_left_wall('emezon'), box_on_rack('soriene')]
+    core, ports = make_core(tmp_path, boxes, settings=rc.RestockSettings(**VISION))
+    phases = []
+    orig = core._goto
+
+    def spy(phase, **a):
+        phases.append(phase)
+        return orig(phase, **a)
+    core._goto = spy
+    run(core, ports)
+    assert core.done and core.outcome.startswith('COMPLETE'), (core.outcome, ports.logs[-15:])
+    assert [b.state for b in boxes] == ['dock', 'dock'], ports.logs[-15:]
+    # the rack box is picked by its front face (QR); the wall box by the face the
+    # robot reached: with no QR there it goes to walnut (no_qr_company)
+    assert core.per_company()['soriene'] == 1
+    assert sum(core.per_company().values()) == 2
+    for p in ('SERVO', 'SQUARE', 'READ_QR', 'CLOSE_IN', 'PICK'):
+        assert p in phases, p
+    assert 'INSPECT' not in phases and 'ALIGN' not in phases
+
+
+def test_vision_approach_squares_up_to_a_skewed_face(tmp_path):
+    for deg in (25, -25):
+        box = box_against_left_wall('emezon')
+        box.yaw = math.radians(deg)                   # box turned on the floor
+        d = tmp_path / str(deg)
+        d.mkdir()
+        core, ports = make_core(d, [box], settings=rc.RestockSettings(**VISION))
+        run(core, ports, stop_when=lambda: core.phase == 'READ_QR')
+        fit = ports.scan_face()
+        assert fit is not None and abs(fit[1]) <= math.radians(3.0), (deg, fit)
+        assert abs(core.ph.get('gap') or 0.0) < 0.3
+        run_on(core, ports)
+        assert core.done and box.state == 'dock', ports.logs[-15:]
+
+
+def test_vision_approach_without_qr_goes_to_walnut(tmp_path):
+    box = box_against_left_wall('emezon', qr='back')  # QR not on the front face
+    core, ports = make_core(tmp_path, [box], settings=rc.RestockSettings(**VISION))
+    run(core, ports)
+    assert core.done and box.state == 'dock', ports.logs[-15:]
+    assert ports.world_docks['walnut'].contains(box.x, box.y)
+
+
+def test_vision_approach_ends_lost_when_the_box_leaves_the_image(tmp_path):
+    box = box_against_left_wall('emezon')
+    core, ports = make_core(tmp_path, [box], settings=rc.RestockSettings(**VISION))
+    run(core, ports, stop_when=lambda: core.phase == 'SERVO')
+    box.state = 'carried'                             # gone from the image and the scan
+    run_on(core, ports, stop_when=lambda: core.phase != 'SERVO', max_s=ports.t + 30)
+    assert any('left the image' in t for t in ports.logs), ports.logs[-10:]
+    assert ports.cmd == (0.0, 0.0)                    # stopped, not driving blind
+
+
 def test_viewpoints_use_the_quick_profile_and_boxes_the_precise_one(tmp_path):
-    s = rc.RestockSettings(look_settle_s=0.2, look_s=0.5, read_s=0.5, acquire_s=0.4,
-                           logo_look_s=0.4, survey=False, profile_viewpoint='patrol')
+    s = rc.RestockSettings(
+        approach_mode='sendero', look_settle_s=0.2, look_s=0.5, read_s=0.5, acquire_s=0.4,
+        logo_look_s=0.4, survey=False, profile_viewpoint='patrol')
     core, ports = make_core(tmp_path, [box_against_left_wall('walnut')], settings=s)
     run(core, ports)
     assert core.done and core.outcome.startswith('COMPLETE'), core.outcome
@@ -470,6 +554,7 @@ def test_set_down_failure_at_the_dock_holds_with_the_box(tmp_path):
 def run_more(core, ports, max_s=3000.0, dt=0.1):
     while ports.t < max_s and not core.done and not core.error:
         core.tick()
+        ports.step(dt)
         ports.t = round(ports.t + dt, 3)
 
 
@@ -497,7 +582,8 @@ def test_restocking_mode_localizes_from_the_ekf(tmp_path):
 
 
 def test_no_aruco_found_stops_with_an_error(tmp_path):
-    s = rc.RestockSettings(localize_timeout_s=60.0, search_pause_s=0.5, survey=False)
+    s = rc.RestockSettings(
+        approach_mode='sendero', localize_timeout_s=60.0, search_pause_s=0.5, survey=False)
     core, ports = make_core(tmp_path, [], mission='restocking', localized=False, settings=s)
     ports.ekf_track_after = 1e9
     run(core, ports)
@@ -540,8 +626,9 @@ def test_disagreement_triggers_relocalization(tmp_path):
 
 def test_survey_finds_a_missing_dock(tmp_path):
     b = box_against_left_wall('walnut')
-    s = rc.RestockSettings(look_settle_s=0.2, look_s=0.5, read_s=0.5, acquire_s=0.4,
-                           logo_look_s=0.4, survey=True, survey_look_s=0.3)
+    s = rc.RestockSettings(
+        approach_mode='sendero', look_settle_s=0.2, look_s=0.5, read_s=0.5, acquire_s=0.4,
+        logo_look_s=0.4, survey=True, survey_look_s=0.3)
     core, ports = make_core(tmp_path, [b], settings=s, drop_dock='walnut')
     lx, ly, lyaw = RW.logo_positions()['walnut']
     ports.landmarks = lambda: {'logos': [{'id': 'walnut', 'x': lx, 'y': ly, 'yaw': lyaw}]}
@@ -598,13 +685,13 @@ def test_a_goal_sendero_holds_without_moving_is_given_up(tmp_path):
     assert any(b.status == 'failed' for b in core.boxes)
 
 
-
 def test_no_qr_on_the_front_face_goes_to_the_default_company(tmp_path):
     """The default settings: only the face the robot meets is read; a box without a
     readable QR there is picked anyway and delivered to no_qr_company (walnut)."""
     b = box_against_left_wall('emezon', qr='back')        # its QR is on another face
-    s = rc.RestockSettings(look_settle_s=0.2, look_s=0.5, read_s=0.5, acquire_s=0.4,
-                           logo_look_s=0.4, survey=False)
+    s = rc.RestockSettings(
+        approach_mode='sendero', look_settle_s=0.2, look_s=0.5, read_s=0.5, acquire_s=0.4,
+        logo_look_s=0.4, survey=False)
     assert s.inspect_other_faces is False and s.no_qr_company == 'walnut'
     core, ports = make_core(tmp_path, [b], settings=s)
     run(core, ports)

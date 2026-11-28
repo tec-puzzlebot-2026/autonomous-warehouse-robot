@@ -23,6 +23,15 @@ Mission level
 
 Box task (one box at a time)
 
+  approach_mode 'vision' (default): classical vision, no Sendero near the box
+  APPROACH (Sendero only while the box is > servo_start_gap + 0.4 m away) ─> SERVO
+     (turn toward the near detector's box, drive; distance from its 12 cm height in
+     the image, the LiDAR face fit up close) ─> SQUARE (RANSAC line on the LiDAR, or
+     the rack edge on the map: turn until parallel; more than realign_deg off:
+     turn - drive - turn to in front of the face center) ─> CENTER (side step while
+     the face center is off the robot's axis) ─> READ_QR (no QR: no_qr_company)
+     ─> CLOSE_IN ─> PICK ─> DELIVER
+  approach_mode 'sendero':
   APPROACH ─> ACQUIRE ─> INSPECT (faces, QR) ─> ALIGN ─> CLOSE_IN ─> PICK ─> DELIVER
      DELIVER ─> CONFIRM_LOGO ─> DOCK_ALIGN ─> DOCK_IN ─> SET_DOWN ─> DOCK_OUT ─> DONE
      company's dock unknown: OPENING_GO (in front of the nearest dock opening by the
@@ -52,7 +61,7 @@ from dataclasses import asdict, dataclass, field
 from main_ros.restock import geometry as G
 from main_ros.restock import mission_store as ms
 from main_ros.restock.docks import Dock, find_docks, find_openings, free_area_near
-from main_ros.restock.zones import (DROP_ZONE, Zone, ZoneConfig, drop_zone,
+from main_ros.restock.zones import (DROP_ZONE, open_direction, Zone, ZoneConfig, drop_zone,
                                     zones_from_markers)
 from main_ros.restock.geometry import wrap
 from main_ros.restock.grid import OccupancyMap
@@ -74,6 +83,7 @@ RESUME_AT = {
     'DOCK_ALIGN': 'DELIVER_GO', 'DOCK_IN': 'DELIVER_GO', 'DOCK_OUT': 'DELIVER_GO',
     'POST_PICK': 'DELIVER_GO', 'SURVEY_LOOK': 'SURVEY_GO', 'PATROL_LOOK': 'PATROL_LOOK',
     'OPENING_LOOK': 'OPENING_GO',
+    'SERVO': 'APPROACH', 'SQUARE': 'SERVO', 'CENTER': 'SERVO', 'READ_QR': 'READ_QR',
 }
 # SET_DOWN restarts itself (the box is still held), see _enter_SET_DOWN.
 
@@ -95,6 +105,28 @@ class RestockSettings:
     # of the box's inflated costmap (Sendero would move the goal and creep). From there
     # the Align action (made for close quarters) brings the robot square to the face.
     approach_gap: float = 0.45
+    # How the robot gets to a box: 'vision' = classical visual servoing on the near
+    # box detector (bearing from the image, distance from the box's known size, the
+    # LiDAR face fit up close), squared to the pick face by RANSAC on the LiDAR, QR
+    # read, then the pick code. 'sendero' = the old Sendero goals + Align action.
+    approach_mode: str = 'vision'
+    # Sendero brings the robot this far (fork tips -> face) when the box is farther,
+    # outside its costmap inflation; from there on only vision moves it.
+    servo_start_gap: float = 0.60      # m
+    servo_stop_gap: float = 0.20       # m, fork tips -> face where the servo stops
+    servo_max_v: float = 0.08          # m/s
+    servo_max_w: float = 0.5           # rad/s
+    servo_k_bearing: float = 1.5       # rad/s per rad of bearing to the box
+    servo_lost_s: float = 3.0          # s without the box in the image: lost
+    servo_timeout_s: float = 90.0
+    square_tol_deg: float = 3.0        # face this parallel (LiDAR RANSAC) before reading
+    square_tries: int = 3
+    realign_deg: float = 8.0           # face off by more: turn-drive-turn in front of it
+    center_tol: float = 0.02           # m, face center this close to the robot's axis
+    center_tries: int = 2              # side steps (turn 90 deg, drive, turn back)
+    # A rack box is picked by its face toward the free floor (normal from the map):
+    # the robot must look at it within rack_face_deg, else Sendero drives in front.
+    rack_face_deg: float = 35.0
     # QR only on the face the robot meets (true: drive round the box to the other faces).
     inspect_other_faces: bool = False
     # Company for a box whose QR is not read: it is picked and delivered there anyway
@@ -968,6 +1000,9 @@ class RestockCore:
         return None
 
     def _enter_APPROACH(self, again=False):
+        if str(self.s.approach_mode).lower() == 'vision':
+            self._approach_vision(again)
+            return
         box = self.box
         self._vision()
         pose = self._approach_pose(box, self.s.approach_gap)
@@ -978,6 +1013,250 @@ class RestockCore:
         self.detail = f'{box.id}: approaching'
         self._nav(pose, self.s.profile_patrol, lambda: self._goto('ACQUIRE', again=again),
                   lambda r: self._box_end('failed', r), f'{box.id} approach')
+
+    # ── vision approach: servo -> square -> read the QR -> close in -> pick ──
+    def _approach_vision(self, again=False):
+        """Drive with Sendero only while the box is far; the last stretch is vision."""
+        box = self.box
+        self._vision('box_target')
+        if box.level > 0 and box.yaw is None:      # rack: the face toward the free floor
+            box.yaw = open_direction(self.world.grid, box.x, box.y)
+        pose = self.p.slam_pose()
+        far = True
+        if pose is not None:
+            rel = G.relative(pose, (box.x, box.y, 0.0))
+            gap = math.hypot(rel[0], rel[1]) - self.spec.depth / 2 - self.s.robot_front_x
+            far = gap > self.s.servo_start_gap + 0.4 or abs(math.atan2(rel[1], rel[0])) > 0.6
+            if box.level > 0:
+                view = math.atan2(pose[1] - box.y, pose[0] - box.x)
+                far = far or abs(wrap(view - box.yaw)) > math.radians(self.s.rack_face_deg)
+        if not far:
+            self._goto('SERVO')
+            return
+        target = self._approach_pose(box, self.s.servo_start_gap)
+        if target is None:
+            self._box_end('failed', 'no reachable pose in front of the box')
+            return
+        self.detail = f'{box.id}: driving near the box (Sendero), then vision'
+        self._nav(target, self.s.profile_patrol, lambda: self._goto('SERVO'),
+                  lambda r: self._box_end('failed', r), f'{box.id} approach')
+
+    def _enter_SERVO(self):
+        self._vision('box_target', 'box_far')
+        self.ph.update(t0=self.p.now(), seen=self.p.now(), ref=None)
+        self.detail = f'{self.box.id}: visual servo to the box'
+
+    def _box_in_view(self, now):
+        """(gap, bearing, sighting) of the box from the newest near detection, or None.
+        gap: fork tips -> face (LiDAR when it sees the face, else the box's size in
+        the image); bearing: the box center seen from the robot [rad]."""
+        msgs = [d for t, d in self.p.messages('box_target', now - 0.6) if d.get('found')]
+        if not msgs:            # still too far for the near model: steer by the far one
+            msgs = [d for t, d in self.p.messages('box_far', now - 0.6)
+                    if d.get('found') and d.get('box')]
+        cam, pose = self.p.camera(), self.p.slam_pose()
+        if not msgs or cam is None or pose is None:
+            return None
+        d = msgs[-1]
+        sg = G.locate_box(cam, pose, d['box'], self.spec)
+        gap = sg.distance - self.s.robot_front_x
+        touch = d.get('touches') or {}
+        h = (d.get('frame') or [0, 2 * cam.cy])[1]
+        cut = touch.get('top') or touch.get('bottom') or \
+            d['box'][1] <= 2 or d['box'][3] >= h - 2
+        ref = self.ph.get('ref')
+        if cut and ref is not None:
+            # box cut by the image edge: its height in pixels lies; dead-reckon from the
+            # last whole view instead
+            gap = ref[0] - math.hypot(pose[0] - ref[1], pose[1] - ref[2])
+        elif not cut:
+            self.ph['ref'] = (gap, pose[0], pose[1])
+        if sg.level == 0:
+            fit = self.p.scan_face()
+            if fit is not None and abs(fit[0] - self.s.robot_front_x - gap) < 0.15:
+                gap = fit[0] - self.s.robot_front_x
+        return gap, sg.bearing, sg, cut
+
+    def _tick_SERVO(self, now):
+        box, ph = self.box, self.ph
+        if now - ph['t0'] > self.s.servo_timeout_s:
+            self.p.send_velocity(0.0, 0.0)
+            self._box_end('failed', f'visual servo timed out ({self.s.servo_timeout_s:.0f} s)')
+            return
+        seen = self._box_in_view(now)
+        if seen is None:
+            self.p.send_velocity(0.0, 0.0)
+            if now - ph['seen'] > self.s.servo_lost_s:
+                self._box_end('lost', 'the box left the image during the visual servo')
+            return
+        ph['seen'] = now
+        gap, bearing, sg, cut = seen
+        box.level = sg.level
+        if not cut:
+            box.x, box.y = sg.x, sg.y
+        if gap <= self.s.servo_stop_gap:
+            self.p.send_velocity(0.0, 0.0)
+            self._event(f'{box.id}: in front of the box ({100 * gap:.0f} cm), level '
+                        f'{box.level}; squaring up')
+            self._goto('SQUARE', tries=0, centered=0,
+                       face_x=gap + self.s.robot_front_x)
+            return
+        w = max(-self.s.servo_max_w, min(self.s.servo_max_w, self.s.servo_k_bearing * bearing))
+        v = 0.0
+        if abs(bearing) < 0.25:                    # facing it: drive, slower near the end
+            v = max(0.02, min(self.s.servo_max_v, 0.6 * (gap - self.s.servo_stop_gap)))
+        self.p.send_velocity(v, w)
+
+    def _enter_SQUARE(self, tries=0, centered=0, face_x=None):
+        """Parallel to the pick face. Floor box: RANSAC line on the LiDAR, turn by its
+        angle. Rack box: the rack edge's direction on the map. Measured once the robot
+        has stood still for look_settle_s (fresh scan and image after a turn)."""
+        self.ph.update(t0=self.p.now(), tries=tries, centered=centered, face_x=face_x)
+        self.detail = f'{self.box.id}: squaring up'
+
+    def _tick_SQUARE(self, now):
+        if self.wait is not None or now - self.ph['t0'] < self.s.look_settle_s:
+            return
+        tries, centered, face_x = self.ph['tries'], self.ph['centered'], self.ph['face_x']
+        self.ph['t0'] = float('inf')                  # measure once per entry
+        self.ph['settled'] = now - self.s.look_settle_s / 2
+        box = self.box
+        pose = self.p.slam_pose()
+        fit = self.p.scan_face() if box.level == 0 else None
+        if pose is None:
+            self._goto('READ_QR')
+            return
+        if fit is not None:
+            dist, yaw_err = fit
+        elif box.level > 0 and box.yaw is not None:
+            dist, yaw_err = None, wrap(box.yaw + math.pi - pose[2])
+        else:
+            dist, yaw_err = None, 0.0
+        if abs(yaw_err) > math.radians(self.s.realign_deg) and tries < self.s.square_tries:
+            self._realign(pose, dist, yaw_err, tries, centered)
+            return
+        if abs(yaw_err) > math.radians(self.s.square_tol_deg) and tries < self.s.square_tries:
+            self.detail = f'{box.id}: squaring up ({math.degrees(yaw_err):.1f} deg)'
+            self._await(self.p.rotate(yaw_err), self.s.drive_timeout_s,
+                        lambda: self._goto('SQUARE', tries=tries + 1, centered=centered,
+                                           face_x=face_x),
+                        lambda r: self._goto('READ_QR'), 'square up')
+            return
+        box.yaw = wrap(pose[2] + math.pi + yaw_err)
+        gap = None
+        if dist is not None:
+            self.ph['face_x'] = face_x = dist
+            gap = dist - self.s.robot_front_x
+            c = dist + self.spec.depth / 2
+            box.x, box.y = pose[0] + c * math.cos(pose[2]), pose[1] + c * math.sin(pose[2])
+        lateral = self._lateral(pose)
+        if lateral is not None and abs(lateral) > self.s.center_tol and \
+                centered < self.s.center_tries:
+            self._goto('CENTER', lateral=lateral, tries=centered, face_x=face_x)
+            return
+        self._event(f'{box.id}: parallel to the face ({math.degrees(yaw_err):+.1f} deg'
+                    + (f', {100 * lateral:+.1f} cm off center' if lateral is not None else '')
+                    + ')')
+        self._goto('READ_QR', gap=gap)
+
+    def _realign(self, pose, dist, yaw_err, tries, centered):
+        """Face far off parallel: turning in place would swing it out of the image and
+        off the robot's axis. Instead turn - drive - turn (odometry) to the point in front
+        of the face center, on its normal, then square up again."""
+        box, d = self.box, self.spec.depth
+        if dist is not None:
+            # The servo aimed at the box center, so it lies on the robot's x axis behind
+            # the face the LiDAR sees at `dist`.
+            cx = dist + d / (2.0 * max(math.cos(yaw_err), 0.3))
+            box.x = pose[0] + cx * math.cos(pose[2])
+            box.y = pose[1] + cx * math.sin(pose[2])
+        normal = wrap(pose[2] + math.pi + yaw_err)       # out of the face, toward the robot
+        box.yaw = normal
+        reach = d / 2 + self.s.servo_stop_gap + self.s.robot_front_x
+        px, py = box.x + reach * math.cos(normal), box.y + reach * math.sin(normal)
+        heading = wrap(normal + math.pi)
+        dx, dy = px - pose[0], py - pose[1]
+        run = math.hypot(dx, dy)
+        to_p = wrap(math.atan2(dy, dx) - pose[2]) if run > 0.02 else 0.0
+        if abs(to_p) > math.pi / 2:                     # behind: back up to it instead
+            to_p, run = wrap(to_p + math.pi), -run
+        self.detail = (f'{box.id}: face {math.degrees(yaw_err):+.0f} deg off: moving '
+                       f'{100 * abs(run):.0f} cm to in front of it')
+        self._event(self.detail)
+        t = self.s.drive_timeout_s
+        fail = lambda r: self._box_end('failed', r)      # noqa: E731
+
+        def again():
+            self._goto('SQUARE', tries=tries + 1, centered=centered,
+                       face_x=self.s.servo_stop_gap + self.s.robot_front_x)
+
+        def turn_to_face():
+            self._await(self.p.rotate(wrap(heading - pose[2] - to_p)), t, again, fail,
+                        'realign: face the box')
+
+        def drive():
+            if abs(run) <= 0.02:
+                turn_to_face()
+                return
+            self._await(self.p.drive_straight(run), t, turn_to_face, fail, 'realign: drive')
+        self._await(self.p.rotate(to_p), t, drive, fail, 'realign: turn')
+
+    def _lateral(self, pose):
+        """Sideways offset [m] of the box center from the robot's axis (+ = left), from
+        the newest near detection (its image column), or None."""
+        since = max(self.p.now() - 0.6, self.ph.get('settled', 0.0))
+        msgs = [d for t, d in self.p.messages('box_target', since) if d.get('found')]
+        cam = self.p.camera()
+        if not msgs or cam is None:
+            return None
+        d = msgs[-1]
+        forward = self.ph.get('face_x')
+        if forward is None:
+            forward = G.locate_box(cam, pose, d['box'], self.spec).distance
+        frame_w = (d.get('frame') or [None])[0]
+        return G.face_center_offset(cam, d['box'], forward, self.spec, frame_w)
+
+    def _enter_CENTER(self, lateral, tries, face_x=None):
+        """Side step: turn 90 deg toward the box center, drive the offset, turn back."""
+        side = math.copysign(math.pi / 2, lateral)
+        self.detail = f'{self.box.id}: centering ({100 * lateral:+.1f} cm)'
+        t = self.s.drive_timeout_s
+
+        def back():
+            self._await(self.p.rotate(-side), t,
+                        lambda: self._goto('SQUARE', tries=0, centered=tries + 1,
+                                           face_x=face_x),
+                        lambda r: self._box_end('failed', r), 'center: turn back')
+
+        def drive():
+            self._await(self.p.drive_straight(abs(lateral)), t, back,
+                        lambda r: self._box_end('failed', r), 'center: side step')
+        self._await(self.p.rotate(side), t, drive,
+                    lambda r: self._box_end('failed', r), 'center: turn')
+
+    def _enter_READ_QR(self, gap=None):
+        self.ph['gap'] = gap
+        self.detail = f'{self.box.id}: reading the QR code'
+        self._start_look(('box_target', 'qr'), self.s.read_s)
+
+    def _tick_READ_QR(self, now):
+        if not self._look_done(now):
+            return
+        box = self.box
+        company = self._read_qr()
+        fallback = str(self.s.no_qr_company or '').strip().lower()
+        if company:
+            box.company = company
+            self._event(f'{box.id}: QR "{company}"')
+        elif fallback in self.s.companies:
+            box.company = fallback
+            self._event(f'{box.id}: no QR code read on the front face: picked anyway, it '
+                        f'goes to {fallback} (no_qr_company)')
+        else:
+            box.data_missing = True
+            self._event(f'{box.id}: no QR code read: "data missing"')
+        self._vision()
+        self._goto('CLOSE_IN', gap=self.ph.get('gap'))
 
     def _enter_ACQUIRE(self, again=False, retried=False):
         self.ph.update(again=again, retried=retried)

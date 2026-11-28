@@ -147,6 +147,39 @@ def locate_box(cam, robot_pose, image_box, spec=BoxSpec()):
     return BoxSighting(cx, cy, bottom_z, level, dist, bearing)
 
 
+def face_center_offset(cam, image_box, forward, spec=BoxSpec(), frame_w=None):
+    """Sideways offset [m, + = left] of a face's center from base_link's x axis, for a
+    face `forward` m ahead (base_link x; the LiDAR fit when the robot is parallel to it).
+
+    Each image column is a ray; it meets the plane x = forward at a known y. A box edge
+    cut by the image border is no edge, so then the other edge and the face's known
+    width (12 cm) give the center.
+    """
+    x1, y1, x2, y2 = [float(v) for v in image_box[:4]]
+    w = frame_w if frame_w else 2.0 * cam.cx
+    v = 0.5 * (y1 + y2)
+
+    def y_at(u):
+        o = cam.point_base(u, v, 0.0)
+        r = cam.point_base(u, v, 1.0) - o
+        if abs(r[0]) < 1e-6:
+            return None
+        return float(o[1] + (forward - o[0]) / r[0] * r[1])
+
+    left_cut, right_cut = x1 <= 2, x2 >= w - 2
+    half = spec.width / 2
+    if left_cut and right_cut:
+        return None
+    if left_cut:                     # image left = robot left (+y): the right edge is real
+        yr = y_at(x2)
+        return None if yr is None else yr + half
+    if right_cut:
+        yl = y_at(x1)
+        return None if yl is None else yl - half
+    yl, yr = y_at(x1), y_at(x2)
+    return None if yl is None or yr is None else 0.5 * (yl + yr)
+
+
 # =============================================================================
 # Box faces on the map
 # =============================================================================

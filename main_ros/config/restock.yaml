@@ -49,6 +49,25 @@ restock:
   # ── robot and box geometry ────────────────────────────────────────────────
   # Gaps are measured from the robot's FRONT to the box face.
   robot_front_x: 0.18        # m, base_link (wheel axle) -> fork tips (pick_sim.json fork_reach_m)
+  # ── how the robot gets to a box ──────────────────────────────────────────
+  # vision: classical CV. The near box detector gives the bearing and (box is 12 cm
+  # tall) the distance; the robot turns to the box and drives until servo_stop_gap,
+  # then squares up to the face with a RANSAC line on the LiDAR, reads the QR on the
+  # front face and hands off to the pick code. sendero: the old Sendero + Align path.
+  approach_mode: vision
+  servo_start_gap: 0.60      # m, Sendero only drives boxes farther than this (+0.4 m)
+  servo_stop_gap: 0.20       # m, fork tips -> face where the servo stops
+  servo_max_v: 0.08          # m/s
+  servo_max_w: 0.5           # rad/s
+  servo_k_bearing: 1.5       # rad/s per rad of bearing
+  servo_lost_s: 3.0          # s without the box in the image: lost
+  servo_timeout_s: 90.0
+  square_tol_deg: 3.0        # parallel to the face within this
+  square_tries: 3
+  realign_deg: 8.0           # face off by more: turn-drive-turn to in front of its center
+  center_tol: 0.02           # m, then side-steps (turn 90 deg, drive, turn back) until
+  center_tries: 2            # the face center is this close to the robot's axis
+  rack_face_deg: 35.0        # rack box: picked by the face toward the free floor
   approach_gap: 0.45         # m, where the robot drives to in front of a box (fork tips ->
                              # face): out of the box's inflated costmap, so Sendero does
                              # not move the goal and creep; the Align action takes over
