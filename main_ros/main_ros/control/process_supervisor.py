@@ -97,14 +97,17 @@ class ManagedProcess:
 class ProcessSupervisor:
     """Launches scripts and keeps track of them."""
 
-    def __init__(self, log_dir, env=None, logger=None):
+    def __init__(self, log_dir, env=None, logger=None, not_in_all=()):
         """Create the supervisor.
 
         Args:
             log_dir: Directory for this session's logs (created).
             env: Environment for the scripts (default: this process's).
             logger: Callable(text) for supervisor messages.
+            not_in_all: Script names whose output goes only to their own log file,
+                not to all.txt (chatty scripts that would fill it).
         """
+        self.not_in_all = set(not_in_all or ())
         self.log_dir = log_dir
         os.makedirs(log_dir, exist_ok=True)
         self.env = dict(env if env is not None else os.environ)
@@ -154,9 +157,12 @@ class ProcessSupervisor:
     def _pump(self, mp, fh):
         """Copy a script's output to its log file and to all.txt."""
         prefix = f'[{mp.name}] '
+        to_all = mp.name not in self.not_in_all
         try:
             for line in mp.proc.stdout:
                 fh.write(line)
+                if not to_all:
+                    continue
                 try:
                     self._all.write(prefix + line)
                 except ValueError:      # all.txt closed at shutdown

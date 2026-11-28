@@ -86,6 +86,8 @@ modes:
 
 tick_hz: 10.0               # state machine rate
 status_hz: 2.0              # /mission/status rate (what the monitor reads)
+# Scripts whose output goes only to their own log (<name>.txt), not to all.txt.
+not_in_all_log: [scan_filter, foxglove_bridge]
 
 topics:
   command: /mission/command                  # in : S P F M R N X (or words)

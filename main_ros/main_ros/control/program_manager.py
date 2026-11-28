@@ -222,7 +222,8 @@ class ProgramManager(Node):
                            + (', restock_only' if restock_only else ''))
 
         self.steps = self._load_steps()
-        self.sup = ProcessSupervisor(self.log_dir, logger=self._log_line)
+        self.sup = ProcessSupervisor(self.log_dir, logger=self._log_line,
+                                     not_in_all=self.cfg.get('not_in_all_log', []) or [])
         topics = self.cfg['topics']
         self.topics = topics
 
